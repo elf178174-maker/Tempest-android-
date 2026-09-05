@@ -96,6 +96,10 @@ impl Platform for AndroidPlatform {
         }
     }
 
+    fn uri_handler_status(&self) -> Result<UriRegistration> {
+        Ok(UriRegistration::ManifestDeclared)
+    }
+
     fn register_uri_handler(&self) -> Result<UriRegistration> {
         // The `vortex://` intent filter is declared in AndroidManifest.xml and
         // registered by the package installer. There is deliberately nothing to

@@ -83,14 +83,21 @@ impl Platform for LinuxPlatform {
         }
     }
 
+    fn uri_handler_status(&self) -> Result<UriRegistration> {
+        let desktop = applications_dir().join("tempest-vortex.desktop");
+        if desktop.exists() {
+            Ok(UriRegistration::Desktop)
+        } else {
+            Err(TempestError::missing(
+                "vortex:// handler",
+                "no tempest-vortex.desktop file is installed",
+            ))
+        }
+    }
+
     fn register_uri_handler(&self) -> Result<UriRegistration> {
         let exe = std::env::current_exe()?;
-        let apps_dir = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-            })
-            .join("applications");
+        let apps_dir = applications_dir();
         std::fs::create_dir_all(&apps_dir)?;
 
         let desktop = apps_dir.join("tempest-vortex.desktop");
@@ -120,6 +127,15 @@ impl Platform for LinuxPlatform {
 
         Ok(UriRegistration::Desktop)
     }
+}
+
+fn applications_dir() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
+        })
+        .join("applications")
 }
 
 fn read_os_release() -> Option<String> {

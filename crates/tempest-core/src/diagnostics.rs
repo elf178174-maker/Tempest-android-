@@ -89,6 +89,12 @@ impl Report {
 
 pub fn run(platform: &PlatformRef) -> Report {
     let info = platform.info();
+    // The same advice has to name a different place on each front-end.
+    let install_hint: fn(&str) -> String = if info.kind == HostKind::Android {
+        |what| format!("Install {what} from Settings → Runtime.")
+    } else {
+        |what| format!("Install {what} with `tempest runtime <name>`.")
+    };
     let paths = platform.paths();
     let runtime = RuntimeManager::new(platform.clone());
     let guest = GuestEnv::new(platform);
@@ -145,14 +151,19 @@ pub fn run(platform: &PlatformRef) -> Report {
                 spec.display_name,
                 "not installed",
                 format!(
-                    "Install it from Settings → Runtime (about {} MB).",
+                    "{} It is about {} MB.",
+                    install_hint("it"),
                     spec.approx_bytes / (1024 * 1024)
                 ),
             ),
             (false, false) => Check::warn(
                 spec.display_name,
                 "not installed (optional)",
-                format!("Install from Settings → Runtime if you need it: {}", spec.purpose),
+                format!(
+                    "{} It provides: {}",
+                    install_hint("it"),
+                    normalise(spec.purpose)
+                ),
             ),
         };
         checks.push(check);
@@ -206,7 +217,7 @@ pub fn run(platform: &PlatformRef) -> Report {
                     checks.push(Check::warn(
                         "Vulkan (in container)",
                         "vulkaninfo is not installed, so the driver could not be probed",
-                        "Install the Vulkan/Mesa component from Settings → Runtime.",
+                        install_hint("the Vulkan/Mesa component"),
                     ));
                 } else if let Some(device) = lines.iter().find(|l| l.contains("deviceName")) {
                     checks.push(Check::pass("Vulkan (in container)", device.trim()));
@@ -254,7 +265,7 @@ pub fn run(platform: &PlatformRef) -> Report {
     checks.push(Check::pass("Credential storage", platform.secrets().describe()));
 
     // --- Deep links --------------------------------------------------------
-    match platform.register_uri_handler() {
+    match platform.uri_handler_status() {
         Ok(crate::platform::UriRegistration::ManifestDeclared) => checks.push(Check::pass(
             "vortex:// links",
             "declared in the app manifest and registered at install time",
@@ -265,7 +276,11 @@ pub fn run(platform: &PlatformRef) -> Report {
         Err(e) => checks.push(Check::fail(
             "vortex:// links",
             e.to_string(),
-            "Paste the link into the app's Open Link box instead.",
+            if info.kind == HostKind::Android {
+                "Paste the link into the app's Open Link box instead."
+            } else {
+                "Run `tempest setup` to register the handler."
+            },
         )),
     }
 
@@ -278,6 +293,11 @@ pub fn run(platform: &PlatformRef) -> Report {
     let failures = checks.iter().filter(|c| c.verdict == Verdict::Fail).count();
     let warnings = checks.iter().filter(|c| c.verdict == Verdict::Warn).count();
     Report { checks, failures, warnings, platform: info }
+}
+
+/// Collapse the multi-line string literals in the catalogue into one line.
+fn normalise(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Is an X server reachable?
@@ -328,6 +348,9 @@ mod tests {
                 device_model: Some("Test Device".into()),
                 needs_x86_translation: true,
             }
+        }
+        fn uri_handler_status(&self) -> crate::Result<UriRegistration> {
+            Ok(UriRegistration::ManifestDeclared)
         }
         fn register_uri_handler(&self) -> crate::Result<UriRegistration> {
             Ok(UriRegistration::ManifestDeclared)

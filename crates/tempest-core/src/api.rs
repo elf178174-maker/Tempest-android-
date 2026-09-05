@@ -257,6 +257,9 @@ mod tests {
                 needs_x86_translation: true,
             }
         }
+        fn uri_handler_status(&self) -> Result<UriRegistration> {
+            Ok(UriRegistration::ManifestDeclared)
+        }
         fn register_uri_handler(&self) -> Result<UriRegistration> {
             Ok(UriRegistration::ManifestDeclared)
         }

@@ -741,6 +741,9 @@ mod tests {
                 needs_x86_translation: false,
             }
         }
+        fn uri_handler_status(&self) -> Result<UriRegistration> {
+            Ok(UriRegistration::Desktop)
+        }
         fn register_uri_handler(&self) -> Result<UriRegistration> {
             Ok(UriRegistration::Desktop)
         }

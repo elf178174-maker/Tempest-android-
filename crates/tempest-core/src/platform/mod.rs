@@ -87,6 +87,11 @@ pub trait Platform: Send + Sync + 'static {
     /// On Android this is a no-op that reports [`UriRegistration::ManifestDeclared`],
     /// because the intent filter is declared in the manifest at install time.
     fn register_uri_handler(&self) -> crate::Result<UriRegistration>;
+
+    /// Report how `vortex://` links currently reach the app, **without
+    /// changing anything**. Diagnostics must not have side effects: running
+    /// `tempest doctor` should never silently re-register a handler.
+    fn uri_handler_status(&self) -> crate::Result<UriRegistration>;
 }
 
 /// Shared handle used throughout the core.

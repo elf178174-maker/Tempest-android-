@@ -41,14 +41,12 @@ pub fn keystore_backed(vm: &JavaVM, callback: GlobalRef) -> Box<dyn SecretStore>
     let description = describe(vm, &callback)
         .unwrap_or_else(|_| "Android Keystore (description unavailable)".to_string());
 
-    Box::new(
-        tempest_core::platform::android::CallbackSecretStore::new(
-            Box::new(move |key: &str| call_get(&vm_get, &cb_get, key)),
-            Box::new(move |key: &str, value: &str| call_set(&vm_set, &cb_set, key, value)),
-            Box::new(move |key: &str| call_delete(&vm_del, &cb_del, key)),
-            description,
-        ),
-    )
+    Box::new(tempest_core::platform::android::CallbackSecretStore::new(
+        Box::new(move |key: &str| call_get(&vm_get, &cb_get, key)),
+        Box::new(move |key: &str, value: &str| call_set(&vm_set, &cb_set, key, value)),
+        Box::new(move |key: &str| call_delete(&vm_del, &cb_del, key)),
+        description,
+    ))
 }
 
 fn call_get(vm: &JavaVM, cb: &GlobalRef, key: &str) -> Result<Option<String>> {
@@ -136,7 +134,8 @@ fn keystore_error(env: &mut jni::JNIEnv, e: jni::errors::Error) -> TempestError 
     if let Ok(true) = env.exception_check() {
         if let Ok(exception) = env.exception_occurred() {
             let _ = env.exception_clear();
-            if let Ok(msg) = env.call_method(&exception, "getMessage", "()Ljava/lang/String;", &[]) {
+            if let Ok(msg) = env.call_method(&exception, "getMessage", "()Ljava/lang/String;", &[])
+            {
                 if let Ok(obj) = msg.l() {
                     if !obj.is_null() {
                         if let Ok(s) = env.get_string(&obj.into()) {

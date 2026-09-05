@@ -202,7 +202,9 @@ mod tests {
 
     #[test]
     fn status_explanations_are_actionable() {
-        assert!(ProcessStatus::Exited(126).explain().contains("native library"));
+        assert!(ProcessStatus::Exited(126)
+            .explain()
+            .contains("native library"));
         assert!(ProcessStatus::Signalled(9).explain().contains("low-memory"));
         assert!(ProcessStatus::Exited(0).explain().contains("cleanly"));
     }
@@ -210,8 +212,8 @@ mod tests {
     #[test]
     fn args_are_kept_as_separate_elements() {
         // A URI containing shell metacharacters must survive as one argument.
-        let spec = ProcessSpec::new("wine", "/usr/bin/wine")
-            .arg("vortex://play?game=1&token=a;rm -rf /");
+        let spec =
+            ProcessSpec::new("wine", "/usr/bin/wine").arg("vortex://play?game=1&token=a;rm -rf /");
         assert_eq!(spec.args.len(), 1);
         assert!(spec.args[0].contains(';'));
     }

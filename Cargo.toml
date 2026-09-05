@@ -9,6 +9,9 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
+# Verified floor. Below this, transitive dependencies (cookie_store, the ICU
+# crates pulled in by `url`) fail to build; the CI workflow pins the same value.
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/elf178174-maker/Tempest-android-"
 

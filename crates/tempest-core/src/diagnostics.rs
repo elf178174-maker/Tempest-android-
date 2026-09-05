@@ -30,7 +30,12 @@ pub struct Check {
 
 impl Check {
     fn pass(name: &str, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), verdict: Verdict::Pass, detail: detail.into(), fix: None }
+        Self {
+            name: name.into(),
+            verdict: Verdict::Pass,
+            detail: detail.into(),
+            fix: None,
+        }
     }
     fn warn(name: &str, detail: impl Into<String>, fix: impl Into<String>) -> Self {
         Self {
@@ -113,7 +118,10 @@ pub fn run(platform: &PlatformRef) -> Report {
     } else {
         checks.push(Check::pass(
             "CPU architecture",
-            format!("{} — Windows binaries run without translation", info.cpu_arch),
+            format!(
+                "{} — Windows binaries run without translation",
+                info.cpu_arch
+            ),
         ));
     }
 
@@ -123,7 +131,10 @@ pub fn run(platform: &PlatformRef) -> Report {
         if proot.exists() {
             let executable = platform.process().can_execute(&proot);
             if executable {
-                checks.push(Check::pass("Container (PRoot)", proot.display().to_string()));
+                checks.push(Check::pass(
+                    "Container (PRoot)",
+                    proot.display().to_string(),
+                ));
             } else {
                 checks.push(Check::fail(
                     "Container (PRoot)",
@@ -171,7 +182,10 @@ pub fn run(platform: &PlatformRef) -> Report {
 
     // --- Wine prefix -------------------------------------------------------
     if paths.wine_prefix().join("system.reg").exists() {
-        checks.push(Check::pass("Wine prefix", paths.wine_prefix().display().to_string()));
+        checks.push(Check::pass(
+            "Wine prefix",
+            paths.wine_prefix().display().to_string(),
+        ));
     } else if paths.wine_prefix().exists() {
         checks.push(Check::warn(
             "Wine prefix",
@@ -203,7 +217,9 @@ pub fn run(platform: &PlatformRef) -> Report {
     }
 
     // --- Vulkan inside the container ---------------------------------------
-    if runtime.is_installed(&manifest::spec(manifest::ComponentId::Rootfs)) && guest.preflight().is_ok() {
+    if runtime.is_installed(&manifest::spec(manifest::ComponentId::Rootfs))
+        && guest.preflight().is_ok()
+    {
         match runtime.run_in_guest(
             "vulkaninfo",
             "command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>&1 | \
@@ -262,7 +278,10 @@ pub fn run(platform: &PlatformRef) -> Report {
             "Sign out and in again to recreate the stored credential.",
         )),
     }
-    checks.push(Check::pass("Credential storage", platform.secrets().describe()));
+    checks.push(Check::pass(
+        "Credential storage",
+        platform.secrets().describe(),
+    ));
 
     // --- Deep links --------------------------------------------------------
     match platform.uri_handler_status() {
@@ -270,9 +289,10 @@ pub fn run(platform: &PlatformRef) -> Report {
             "vortex:// links",
             "declared in the app manifest and registered at install time",
         )),
-        Ok(crate::platform::UriRegistration::Desktop) => {
-            checks.push(Check::pass("vortex:// links", "registered with the desktop"))
-        }
+        Ok(crate::platform::UriRegistration::Desktop) => checks.push(Check::pass(
+            "vortex:// links",
+            "registered with the desktop",
+        )),
         Err(e) => checks.push(Check::fail(
             "vortex:// links",
             e.to_string(),
@@ -287,12 +307,21 @@ pub fn run(platform: &PlatformRef) -> Report {
     // --- Storage -----------------------------------------------------------
     checks.push(Check::pass(
         "Storage in use",
-        format!("{:.1} MB under {}", paths.disk_usage() as f64 / 1_048_576.0, paths.root().display()),
+        format!(
+            "{:.1} MB under {}",
+            paths.disk_usage() as f64 / 1_048_576.0,
+            paths.root().display()
+        ),
     ));
 
     let failures = checks.iter().filter(|c| c.verdict == Verdict::Fail).count();
     let warnings = checks.iter().filter(|c| c.verdict == Verdict::Warn).count();
-    Report { checks, failures, warnings, platform: info }
+    Report {
+        checks,
+        failures,
+        warnings,
+        platform: info,
+    }
 }
 
 /// Collapse the multi-line string literals in the catalogue into one line.
@@ -309,7 +338,10 @@ fn normalise(text: &str) -> String {
 fn x_server_check() -> Check {
     let socket = std::path::Path::new("/tmp/.X11-unix/X0");
     if socket.exists() {
-        return Check::pass("X server", "a display socket is present at /tmp/.X11-unix/X0");
+        return Check::pass(
+            "X server",
+            "a display socket is present at /tmp/.X11-unix/X0",
+        );
     }
     Check::warn(
         "X server",
@@ -337,9 +369,15 @@ mod tests {
     }
 
     impl Platform for TestPlatform {
-        fn paths(&self) -> &TempestPaths { &self.paths }
-        fn process(&self) -> &dyn ProcessBackend { &self.process }
-        fn secrets(&self) -> &dyn SecretStore { &self.secrets }
+        fn paths(&self) -> &TempestPaths {
+            &self.paths
+        }
+        fn process(&self) -> &dyn ProcessBackend {
+            &self.process
+        }
+        fn secrets(&self) -> &dyn SecretStore {
+            &self.secrets
+        }
         fn info(&self) -> PlatformInfo {
             PlatformInfo {
                 kind: self.kind,
@@ -410,7 +448,11 @@ mod tests {
             .iter()
             .find(|c| c.name.contains("vkd3d"))
             .expect("vkd3d is reported");
-        assert_eq!(vkd3d.verdict, Verdict::Warn, "an optional component must not fail");
+        assert_eq!(
+            vkd3d.verdict,
+            Verdict::Warn,
+            "an optional component must not fail"
+        );
     }
 
     #[test]
@@ -424,22 +466,33 @@ mod tests {
     fn text_export_is_readable_and_leaks_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let p = platform(dir.path(), HostKind::Android);
-        p.secrets().set(crate::platform::secrets::SESSION_TOKEN_KEY, "SECRET").unwrap();
+        p.secrets()
+            .set(crate::platform::secrets::SESSION_TOKEN_KEY, "SECRET")
+            .unwrap();
 
         let text = run(&p).to_text();
         assert!(text.contains("Tempest diagnostics"));
         assert!(text.contains("Test Device"));
         assert!(text.contains("[FAIL]"));
-        assert!(!text.contains("SECRET"), "diagnostics leaked the session token");
+        assert!(
+            !text.contains("SECRET"),
+            "diagnostics leaked the session token"
+        );
     }
 
     #[test]
     fn signed_in_state_is_reported_without_showing_the_token() {
         let dir = tempfile::tempdir().unwrap();
         let p = platform(dir.path(), HostKind::Android);
-        p.secrets().set(crate::platform::secrets::SESSION_TOKEN_KEY, "tok").unwrap();
+        p.secrets()
+            .set(crate::platform::secrets::SESSION_TOKEN_KEY, "tok")
+            .unwrap();
         let report = run(&p);
-        let check = report.checks.iter().find(|c| c.name == "Vortex sign-in").unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "Vortex sign-in")
+            .unwrap();
         assert_eq!(check.verdict, Verdict::Pass);
         assert!(!check.detail.contains("tok"));
     }

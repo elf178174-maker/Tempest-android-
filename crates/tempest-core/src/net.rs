@@ -83,7 +83,10 @@ pub async fn download_verified(
                     return Ok(dest.to_path_buf());
                 }
                 _ => {
-                    crate::logging::warn("net", format!("{} failed verification, re-downloading", dest.display()));
+                    crate::logging::warn(
+                        "net",
+                        format!("{} failed verification, re-downloading", dest.display()),
+                    );
                     tokio::fs::remove_file(dest).await.ok();
                 }
             }
@@ -143,7 +146,11 @@ pub async fn download_verified(
         if !actual.eq_ignore_ascii_case(expected) {
             tokio::fs::remove_file(&part).await.ok();
             return Err(TempestError::Integrity {
-                what: dest.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                what: dest
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
                 expected: expected.to_string(),
                 actual,
             });
@@ -226,7 +233,10 @@ mod tests {
         assert!(!t.is_cancelled());
         let clone = t.clone();
         clone.cancel();
-        assert!(t.is_cancelled(), "cancellation must be shared across clones");
+        assert!(
+            t.is_cancelled(),
+            "cancellation must be shared across clones"
+        );
     }
 
     #[tokio::test]

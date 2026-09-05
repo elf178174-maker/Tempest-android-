@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      A bare splash-free theme. Compose draws everything; this exists only so
+      the window has sane defaults before the first frame.
+    -->
+    <style name="Theme.Tempest" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/background_light</item>
+    </style>
+</resources>

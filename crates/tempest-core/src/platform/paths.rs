@@ -80,32 +80,68 @@ impl TempestPaths {
         self
     }
 
-    pub fn root(&self) -> &Path { &self.root }
-    pub fn config_dir(&self) -> &Path { &self.config }
-    pub fn cache_dir(&self) -> &Path { &self.cache }
-    pub fn logs_dir(&self) -> &Path { &self.logs }
-    pub fn runtime_dir(&self) -> &Path { &self.runtime }
-    pub fn vortex_dir(&self) -> &Path { &self.vortex }
-    pub fn games_dir(&self) -> &Path { &self.games }
-    pub fn wine_prefix(&self) -> &Path { &self.prefix }
-    pub fn tmp_dir(&self) -> &Path { &self.tmp }
-    pub fn native_bin_dir(&self) -> &Path { &self.native_bin }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    pub fn config_dir(&self) -> &Path {
+        &self.config
+    }
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache
+    }
+    pub fn logs_dir(&self) -> &Path {
+        &self.logs
+    }
+    pub fn runtime_dir(&self) -> &Path {
+        &self.runtime
+    }
+    pub fn vortex_dir(&self) -> &Path {
+        &self.vortex
+    }
+    pub fn games_dir(&self) -> &Path {
+        &self.games
+    }
+    pub fn wine_prefix(&self) -> &Path {
+        &self.prefix
+    }
+    pub fn tmp_dir(&self) -> &Path {
+        &self.tmp
+    }
+    pub fn native_bin_dir(&self) -> &Path {
+        &self.native_bin
+    }
 
-    pub fn config_file(&self) -> PathBuf { self.config.join("config.toml") }
-    pub fn key_file(&self) -> PathBuf { self.config.join("vortex.key") }
-    pub fn log_file(&self) -> PathBuf { self.logs.join("tempest.log") }
+    pub fn config_file(&self) -> PathBuf {
+        self.config.join("config.toml")
+    }
+    pub fn key_file(&self) -> PathBuf {
+        self.config.join("vortex.key")
+    }
+    pub fn log_file(&self) -> PathBuf {
+        self.logs.join("tempest.log")
+    }
 
-    pub fn vortex_exe(&self) -> PathBuf { self.vortex.join("Vortex.exe") }
-    pub fn receiver_exe(&self) -> PathBuf { self.vortex.join("receiver.exe") }
+    pub fn vortex_exe(&self) -> PathBuf {
+        self.vortex.join("Vortex.exe")
+    }
+    pub fn receiver_exe(&self) -> PathBuf {
+        self.vortex.join("receiver.exe")
+    }
 
     /// Root of the extracted Linux guest filesystem (Android only; unused on
     /// desktop, where the host filesystem *is* the guest filesystem).
-    pub fn guest_rootfs(&self) -> PathBuf { self.runtime.join("rootfs") }
+    pub fn guest_rootfs(&self) -> PathBuf {
+        self.runtime.join("rootfs")
+    }
 
     /// Where per-component install state is recorded.
-    pub fn runtime_state_file(&self) -> PathBuf { self.runtime.join("components.json") }
+    pub fn runtime_state_file(&self) -> PathBuf {
+        self.runtime.join("components.json")
+    }
 
-    pub fn shader_cache_dir(&self) -> PathBuf { self.cache.join("shaders") }
+    pub fn shader_cache_dir(&self) -> PathBuf {
+        self.cache.join("shaders")
+    }
 
     /// A named executable inside the executable-permitted native directory.
     ///
@@ -189,7 +225,10 @@ mod tests {
                 dir.display()
             );
         }
-        assert_eq!(p.vortex_exe(), Path::new("/anywhere/at/all/vortex/Vortex.exe"));
+        assert_eq!(
+            p.vortex_exe(),
+            Path::new("/anywhere/at/all/vortex/Vortex.exe")
+        );
         assert_eq!(
             p.receiver_exe(),
             Path::new("/anywhere/at/all/vortex/receiver.exe")

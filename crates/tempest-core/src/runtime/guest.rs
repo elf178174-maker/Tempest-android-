@@ -128,7 +128,10 @@ impl GuestEnv {
         ));
         binds.push((paths.games_dir().display().to_string(), "/games".into()));
         binds.push((paths.vortex_dir().display().to_string(), "/vortex".into()));
-        binds.push((paths.shader_cache_dir().display().to_string(), "/shadercache".into()));
+        binds.push((
+            paths.shader_cache_dir().display().to_string(),
+            "/shadercache".into(),
+        ));
 
         binds
     }
@@ -278,7 +281,8 @@ pub fn wine_env(config: &Config, guest: &GuestEnv) -> BTreeMap<String, String> {
     if guest.is_containerised() {
         // Hangover picks its x86-64 emulator from this; FEX is the default and
         // wowbox64 is the alternative the user can select.
-        env.entry("HODLL".into()).or_insert_with(|| "libarm64ecfex.dll".into());
+        env.entry("HODLL".into())
+            .or_insert_with(|| "libarm64ecfex.dll".into());
     }
 
     for (k, v) in &config.wine.env {
@@ -392,7 +396,13 @@ mod tests {
         let p = paths(dir.path());
 
         let spec = guest
-            .command(&p, "wine", "/usr/bin/wine", &["Vortex.exe".into()], base_env())
+            .command(
+                &p,
+                "wine",
+                "/usr/bin/wine",
+                &["Vortex.exe".into()],
+                base_env(),
+            )
             .unwrap();
 
         assert_eq!(spec.program, dir.path().join("lib/libproot.so"));
@@ -413,11 +423,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let guest = ready_guest(dir.path());
         let p = paths(dir.path());
-        let spec = guest.command(&p, "t", "/bin/true", &[], base_env()).unwrap();
+        let spec = guest
+            .command(&p, "t", "/bin/true", &[], base_env())
+            .unwrap();
         let joined = spec.args.join(" ");
-        assert!(joined.contains(":/home/tempest/.wine"), "prefix not bound: {joined}");
+        assert!(
+            joined.contains(":/home/tempest/.wine"),
+            "prefix not bound: {joined}"
+        );
         assert!(joined.contains(":/games"), "games dir not bound: {joined}");
-        assert!(joined.contains(":/vortex"), "vortex dir not bound: {joined}");
+        assert!(
+            joined.contains(":/vortex"),
+            "vortex dir not bound: {joined}"
+        );
         assert!(joined.contains("/proc:/proc"), "proc not bound: {joined}");
     }
 
@@ -432,7 +450,9 @@ mod tests {
 
         let i = spec.args.iter().position(|a| a == "/usr/bin/env").unwrap();
         assert_eq!(spec.args[i + 1], "-i", "guest env must start empty");
-        assert!(spec.args.contains(&"WINEPREFIX=/home/tempest/.wine".to_string()));
+        assert!(spec
+            .args
+            .contains(&"WINEPREFIX=/home/tempest/.wine".to_string()));
     }
 
     #[test]
@@ -442,7 +462,13 @@ mod tests {
         let p = paths(dir.path());
         let hostile = "; rm -rf /".to_string();
         let spec = guest
-            .shell(&p, "t", "echo \"$1\"", std::slice::from_ref(&hostile), base_env())
+            .shell(
+                &p,
+                "t",
+                "echo \"$1\"",
+                std::slice::from_ref(&hostile),
+                base_env(),
+            )
             .unwrap();
 
         // The script and the argument must be separate argv entries: the
@@ -450,7 +476,10 @@ mod tests {
         assert!(spec.args.contains(&"echo \"$1\"".to_string()));
         assert!(spec.args.contains(&hostile));
         assert!(
-            !spec.args.iter().any(|a| a.contains("echo") && a.contains("rm -rf")),
+            !spec
+                .args
+                .iter()
+                .any(|a| a.contains("echo") && a.contains("rm -rf")),
             "argument was interpolated into the script"
         );
     }
@@ -465,7 +494,10 @@ mod tests {
         cfg.launcher.use_fsync = true;
 
         let env = wine_env(&cfg, &guest);
-        assert_eq!(env.get("WINEPREFIX").map(String::as_str), Some("/home/tempest/.wine"));
+        assert_eq!(
+            env.get("WINEPREFIX").map(String::as_str),
+            Some("/home/tempest/.wine")
+        );
         assert_eq!(env.get("DXVK_HUD").map(String::as_str), Some("fps"));
         assert_eq!(env.get("WINEFSYNC").map(String::as_str), Some("1"));
         assert!(env.get("VK_ICD_FILENAMES").unwrap().contains("lvp"));
@@ -478,7 +510,10 @@ mod tests {
         let guest = ready_guest(dir.path());
         let mut cfg = Config::default();
         cfg.wine.env.insert("WINEDEBUG".into(), "-all".into());
-        assert_eq!(wine_env(&cfg, &guest).get("WINEDEBUG").map(String::as_str), Some("-all"));
+        assert_eq!(
+            wine_env(&cfg, &guest).get("WINEDEBUG").map(String::as_str),
+            Some("-all")
+        );
     }
 
     #[test]
@@ -486,7 +521,9 @@ mod tests {
         assert!(is_noise("fixme:d3d:whatever"));
         assert!(is_noise("libEGL warning: DRI2"));
         assert!(is_noise("proot info: vpid 1: terminated"));
-        assert!(!is_noise("err:module:import_dll Library d3d11.dll not found"));
+        assert!(!is_noise(
+            "err:module:import_dll Library d3d11.dll not found"
+        ));
         assert!(!is_noise("wine: Unhandled page fault"));
     }
 }

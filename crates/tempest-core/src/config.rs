@@ -155,9 +155,8 @@ impl Config {
             return Ok(Self::default());
         }
         let contents = std::fs::read_to_string(&path)?;
-        toml::from_str(&contents).map_err(|e| {
-            TempestError::Config(format!("{} is not valid TOML: {e}", path.display()))
-        })
+        toml::from_str(&contents)
+            .map_err(|e| TempestError::Config(format!("{} is not valid TOML: {e}", path.display())))
     }
 
     /// Load, but never fail: a broken file is logged and defaults are used.
@@ -174,8 +173,8 @@ impl Config {
 
     pub fn save(&self, paths: &TempestPaths) -> Result<()> {
         std::fs::create_dir_all(paths.config_dir())?;
-        let contents = toml::to_string_pretty(self)
-            .map_err(|e| TempestError::Config(e.to_string()))?;
+        let contents =
+            toml::to_string_pretty(self).map_err(|e| TempestError::Config(e.to_string()))?;
         // Write-then-rename so an interrupted save cannot truncate the file.
         let tmp = paths.config_file().with_extension("toml.tmp");
         std::fs::write(&tmp, contents)?;
@@ -203,7 +202,10 @@ mod tests {
         cfg.save(&p).unwrap();
 
         let loaded = Config::load(&p).unwrap();
-        assert_eq!(loaded.wine.env.get("DXVK_HUD").map(String::as_str), Some("fps"));
+        assert_eq!(
+            loaded.wine.env.get("DXVK_HUD").map(String::as_str),
+            Some("fps")
+        );
         assert_eq!(loaded.graphics.vulkan_driver, VulkanDriver::Turnip);
         assert_eq!(loaded.launcher.launch_timeout_secs, 42);
     }
@@ -222,11 +224,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = paths(dir.path());
         std::fs::create_dir_all(p.config_dir()).unwrap();
-        std::fs::write(
-            p.config_file(),
-            "[wine]\nbinary = \"/opt/wine/bin/wine\"\n",
-        )
-        .unwrap();
+        std::fs::write(p.config_file(), "[wine]\nbinary = \"/opt/wine/bin/wine\"\n").unwrap();
         let cfg = Config::load(&p).unwrap();
         assert_eq!(cfg.wine.binary, "/opt/wine/bin/wine");
         // Sections absent from the file fall back to defaults.
@@ -253,7 +251,10 @@ mod tests {
         let serialized = toml::to_string_pretty(&Config::default()).unwrap();
         let lower = serialized.to_lowercase();
         for banned in ["token", "password", "session"] {
-            assert!(!lower.contains(banned), "config exposes '{banned}':\n{serialized}");
+            assert!(
+                !lower.contains(banned),
+                "config exposes '{banned}':\n{serialized}"
+            );
         }
     }
 }

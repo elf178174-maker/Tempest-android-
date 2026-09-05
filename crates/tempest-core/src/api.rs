@@ -189,7 +189,10 @@ impl Tempest {
     /// Launch from a `vortex://` deep link or a pasted URI.
     pub fn play_uri(&self, uri: &str) -> Result<VortexLink> {
         let link = crate::uri::parse(uri)?;
-        let name = self.cached_games().get(link.game_id).map(|g| g.name.clone());
+        let name = self
+            .cached_games()
+            .get(link.game_id)
+            .map(|g| g.name.clone());
         self.session.launch(&link, name)?;
         Ok(link)
     }
@@ -245,9 +248,15 @@ mod tests {
         secrets: MemorySecretStore,
     }
     impl Platform for P {
-        fn paths(&self) -> &TempestPaths { &self.paths }
-        fn process(&self) -> &dyn ProcessBackend { &self.process }
-        fn secrets(&self) -> &dyn SecretStore { &self.secrets }
+        fn paths(&self) -> &TempestPaths {
+            &self.paths
+        }
+        fn process(&self) -> &dyn ProcessBackend {
+            &self.process
+        }
+        fn secrets(&self) -> &dyn SecretStore {
+            &self.secrets
+        }
         fn info(&self) -> PlatformInfo {
             PlatformInfo {
                 kind: HostKind::Android,
@@ -315,7 +324,9 @@ mod tests {
     #[test]
     fn play_uri_rejects_a_malformed_link_before_touching_the_runtime() {
         let dir = tempfile::tempdir().unwrap();
-        let err = app(dir.path()).play_uri("http://evil.example/?game=1").unwrap_err();
+        let err = app(dir.path())
+            .play_uri("http://evil.example/?game=1")
+            .unwrap_err();
         assert_eq!(err.kind(), "uri");
     }
 
@@ -327,14 +338,19 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind(), "missing");
         let msg = err.to_string();
-        assert!(msg.contains("Settings"), "should tell the user where to go: {msg}");
+        assert!(
+            msg.contains("Settings"),
+            "should tell the user where to go: {msg}"
+        );
         assert!(msg.contains("rootfs"), "should name what is missing: {msg}");
     }
 
     #[test]
     fn unknown_component_ids_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let err = app(dir.path()).uninstall_component("not-a-component").unwrap_err();
+        let err = app(dir.path())
+            .uninstall_component("not-a-component")
+            .unwrap_err();
         assert!(err.to_string().contains("unknown component"));
     }
 
@@ -348,7 +364,10 @@ mod tests {
         t.save_config(&cfg).unwrap();
 
         let reloaded = t.config();
-        assert_eq!(reloaded.graphics.vulkan_driver, crate::config::VulkanDriver::Lavapipe);
+        assert_eq!(
+            reloaded.graphics.vulkan_driver,
+            crate::config::VulkanDriver::Lavapipe
+        );
         assert_eq!(reloaded.launcher.launch_timeout_secs, 240);
     }
 
@@ -357,7 +376,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let t = app(dir.path());
         GameCatalogue {
-            games: vec![Game { id: 1, name: "Portal".into(), description: None, image_url: None }],
+            games: vec![Game {
+                id: 1,
+                name: "Portal".into(),
+                description: None,
+                image_url: None,
+            }],
             fetched_at: 0,
         }
         .save(t.platform.paths())
@@ -384,7 +408,10 @@ mod tests {
     fn refresh_games_without_a_session_fails_as_an_auth_error() {
         let dir = tempfile::tempdir().unwrap();
         let t = app(dir.path());
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let err = rt
             .block_on(t.refresh_games(&CancelToken::new(), None))
             .unwrap_err();

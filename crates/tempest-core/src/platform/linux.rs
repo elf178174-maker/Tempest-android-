@@ -115,8 +115,18 @@ impl Platform for LinuxPlatform {
         )?;
 
         for (prog, args) in [
-            ("xdg-mime", vec!["default", "tempest-vortex.desktop", "x-scheme-handler/vortex"]),
-            ("gio", vec!["mime", "x-scheme-handler/vortex", "tempest-vortex.desktop"]),
+            (
+                "xdg-mime",
+                vec![
+                    "default",
+                    "tempest-vortex.desktop",
+                    "x-scheme-handler/vortex",
+                ],
+            ),
+            (
+                "gio",
+                vec!["mime", "x-scheme-handler/vortex", "tempest-vortex.desktop"],
+            ),
         ] {
             std::process::Command::new(prog).args(args).status().ok();
         }
@@ -162,7 +172,13 @@ impl FileSecretStore {
         // anyway so a future caller cannot traverse out of the directory.
         let safe: String = key
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         self.dir.join(format!("{safe}.secret"))
     }

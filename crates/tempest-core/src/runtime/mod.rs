@@ -55,7 +55,10 @@ impl RuntimeState {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self).map_err(TempestError::other)?)?;
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(self).map_err(TempestError::other)?,
+        )?;
         Ok(())
     }
 
@@ -151,11 +154,19 @@ impl RuntimeManager {
         self.missing_required().is_empty()
     }
 
-    async fn resolve_url(&self, spec: &ComponentSpec, token: Option<&str>) -> Result<(String, Option<String>)> {
+    async fn resolve_url(
+        &self,
+        spec: &ComponentSpec,
+        token: Option<&str>,
+    ) -> Result<(String, Option<String>)> {
         Ok(match &spec.source {
             Source::Pinned { url, sha256 } => (
                 (*url).to_string(),
-                if sha256.is_empty() { None } else { Some((*sha256).to_string()) },
+                if sha256.is_empty() {
+                    None
+                } else {
+                    Some((*sha256).to_string())
+                },
             ),
             Source::VortexDownload { url } => {
                 let _ = token;
@@ -212,7 +223,12 @@ impl RuntimeManager {
 
         if let Source::GuestPackages { packages } = &spec.source {
             if let Some(p) = progress {
-                p(spec.id, InstallPhase::Configuring { step: "installing packages".into() });
+                p(
+                    spec.id,
+                    InstallPhase::Configuring {
+                        step: "installing packages".into(),
+                    },
+                );
             }
             self.apt_install(packages)?;
             self.record(spec, String::new(), "apt".to_string())?;
@@ -234,8 +250,17 @@ impl RuntimeManager {
         let client = crate::net::client()?;
 
         // Vortex's download endpoint needs the session cookie.
-        let downloaded = if let (Source::VortexDownload { .. }, Some(tok)) = (&spec.source, &token) {
-            download_authenticated(&client, &url, tok, &archive_path, progress_fn.as_ref(), cancel).await?
+        let downloaded = if let (Source::VortexDownload { .. }, Some(tok)) = (&spec.source, &token)
+        {
+            download_authenticated(
+                &client,
+                &url,
+                tok,
+                &archive_path,
+                progress_fn.as_ref(),
+                cancel,
+            )
+            .await?
         } else {
             crate::net::download_verified(
                 &client,
@@ -296,12 +321,16 @@ impl RuntimeManager {
             ComponentId::Rootfs => {
                 let root = paths.guest_rootfs();
                 std::fs::create_dir_all(&root)?;
-                let report = archive::extract(downloaded, &root, spec.format, spec.strip_components)?;
+                let report =
+                    archive::extract(downloaded, &root, spec.format, spec.strip_components)?;
                 crate::logging::info(
                     "runtime",
                     format!(
                         "rootfs: {} files, {} dirs, {} links, {} skipped",
-                        report.files, report.dirs, report.links, report.skipped.len()
+                        report.files,
+                        report.dirs,
+                        report.links,
+                        report.skipped.len()
                     ),
                 );
                 self.prepare_rootfs()?;
@@ -319,7 +348,12 @@ impl RuntimeManager {
                 archive::extract(downloaded, &staging, spec.format, spec.strip_components)?;
 
                 if let Some(p) = progress {
-                    p(spec.id, InstallPhase::Configuring { step: "installing Wine".into() });
+                    p(
+                        spec.id,
+                        InstallPhase::Configuring {
+                            step: "installing Wine".into(),
+                        },
+                    );
                 }
                 self.install_staged_debs()?;
 
@@ -415,13 +449,19 @@ impl RuntimeManager {
 
         // Android does not expose /etc/resolv.conf to apps, so use public
         // resolvers rather than leaving the guest with no DNS at all.
-        write("etc/resolv.conf", "nameserver 1.1.1.1\nnameserver 8.8.8.8\n")?;
+        write(
+            "etc/resolv.conf",
+            "nameserver 1.1.1.1\nnameserver 8.8.8.8\n",
+        )?;
         write(
             "etc/hosts",
             "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n",
         )?;
         // dpkg and apt refuse to run some operations without these.
-        write("etc/passwd", "root:x:0:0:root:/root:/bin/sh\ntempest:x:1000:1000:tempest:/home/tempest:/bin/sh\n")?;
+        write(
+            "etc/passwd",
+            "root:x:0:0:root:/root:/bin/sh\ntempest:x:1000:1000:tempest:/home/tempest:/bin/sh\n",
+        )?;
         write("etc/group", "root:x:0:\ntempest:x:1000:\n")?;
         write("etc/hostname", "tempest\n")?;
         // PRoot cannot provide the mount namespace apt sandboxing wants, and
@@ -438,7 +478,15 @@ impl RuntimeManager {
             "force-unsafe-io\npath-exclude=/usr/share/man/*\npath-exclude=/usr/share/doc/*\n",
         )?;
 
-        for dir in ["home/tempest", "tmp", "run", "var/tmp", "shadercache", "games", "vortex"] {
+        for dir in [
+            "home/tempest",
+            "tmp",
+            "run",
+            "var/tmp",
+            "shadercache",
+            "games",
+            "vortex",
+        ] {
             std::fs::create_dir_all(root.join(dir))?;
         }
         Ok(())
@@ -647,7 +695,9 @@ async fn download_authenticated(
 async fn github_latest_asset(repo: &str, asset_suffix: &str) -> Result<String> {
     let client = crate::net::client()?;
     let body: serde_json::Value = client
-        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
+        .get(format!(
+            "https://api.github.com/repos/{repo}/releases/latest"
+        ))
         .header("Accept", "application/vnd.github+json")
         .send()
         .await?
@@ -729,9 +779,15 @@ mod tests {
     }
 
     impl Platform for FakePlatform {
-        fn paths(&self) -> &TempestPaths { &self.paths }
-        fn process(&self) -> &dyn ProcessBackend { &self.process }
-        fn secrets(&self) -> &dyn SecretStore { &self.secrets }
+        fn paths(&self) -> &TempestPaths {
+            &self.paths
+        }
+        fn process(&self) -> &dyn ProcessBackend {
+            &self.process
+        }
+        fn secrets(&self) -> &dyn SecretStore {
+            &self.secrets
+        }
         fn info(&self) -> PlatformInfo {
             PlatformInfo {
                 kind: HostKind::LinuxDesktop,
@@ -821,7 +877,9 @@ mod tests {
         let mut loaded = loaded;
         loaded.forget(ComponentId::Hangover);
         loaded.save(&platform).unwrap();
-        assert!(RuntimeState::load(&platform).get(ComponentId::Hangover).is_none());
+        assert!(RuntimeState::load(&platform)
+            .get(ComponentId::Hangover)
+            .is_none());
     }
 
     #[test]
@@ -844,7 +902,10 @@ mod tests {
         let freed = mgr.clear_cache().unwrap();
         assert_eq!(freed, 5000);
         assert!(!cache.join("big.tar").exists());
-        assert!(cache.join("games.json").exists(), "offline catalogue was destroyed");
+        assert!(
+            cache.join("games.json").exists(),
+            "offline catalogue was destroyed"
+        );
     }
 
     #[test]
@@ -904,14 +965,19 @@ mod tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("exit"), "{msg}");
-        assert!(msg.contains("something-broke"), "output not surfaced: {msg}");
+        assert!(
+            msg.contains("something-broke"),
+            "output not surfaced: {msg}"
+        );
     }
 
     #[test]
     fn guest_run_returns_output_on_success() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = RuntimeManager::new(fake(dir.path()));
-        let out = mgr.run_in_guest("probe", "echo \"$1\"", &["hello".into()], 30).unwrap();
+        let out = mgr
+            .run_in_guest("probe", "echo \"$1\"", &["hello".into()], 30)
+            .unwrap();
         assert!(out.iter().any(|l| l == "hello"), "{out:?}");
     }
 

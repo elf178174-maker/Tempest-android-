@@ -59,8 +59,8 @@ pub fn parse(uri: &str) -> Result<VortexLink> {
         return Err(TempestError::Uri("link is implausibly long".into()));
     }
 
-    let parsed = Url::parse(uri.trim())
-        .map_err(|e| TempestError::Uri(format!("not a valid URI: {e}")))?;
+    let parsed =
+        Url::parse(uri.trim()).map_err(|e| TempestError::Uri(format!("not a valid URI: {e}")))?;
 
     if !parsed.scheme().eq_ignore_ascii_case(SCHEME) {
         return Err(TempestError::Uri(format!(
@@ -86,7 +86,10 @@ pub fn parse(uri: &str) -> Result<VortexLink> {
                 if is_safe_param_name(other) && value.len() <= 1024 {
                     extra.push((other.to_string(), value.into_owned()));
                 } else {
-                    crate::logging::warn("uri", format!("dropping unrecognised parameter '{other}'"));
+                    crate::logging::warn(
+                        "uri",
+                        format!("dropping unrecognised parameter '{other}'"),
+                    );
                 }
             }
         }
@@ -97,7 +100,11 @@ pub fn parse(uri: &str) -> Result<VortexLink> {
 
     validate_token(&token)?;
 
-    Ok(VortexLink { game_id, token, extra })
+    Ok(VortexLink {
+        game_id,
+        token,
+        extra,
+    })
 }
 
 /// A session token must look like an opaque credential: printable ASCII with
@@ -107,7 +114,9 @@ fn validate_token(token: &str) -> Result<()> {
         return Err(TempestError::Uri("the 'token' parameter is empty".into()));
     }
     if token.len() > MAX_TOKEN_LEN {
-        return Err(TempestError::Uri("the 'token' parameter is too long".into()));
+        return Err(TempestError::Uri(
+            "the 'token' parameter is too long".into(),
+        ));
     }
     if let Some(bad) = token.chars().find(|c| !is_token_char(*c)) {
         return Err(TempestError::Uri(format!(
@@ -125,7 +134,9 @@ fn is_token_char(c: char) -> bool {
 fn is_safe_param_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Sanitise a string for use as a single path component.
@@ -135,15 +146,19 @@ fn is_safe_param_name(name: &str) -> bool {
 /// reserved names.
 pub fn sanitize_filename(input: &str) -> String {
     const RESERVED: &[&str] = &[
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6",
-        "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6",
-        "lpt7", "lpt8", "lpt9",
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
     ];
 
     let mut out: String = input
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0') {
+            if c.is_control()
+                || matches!(
+                    c,
+                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'
+                )
+            {
                 '_'
             } else {
                 c
@@ -191,8 +206,14 @@ mod tests {
 
     #[test]
     fn missing_parameters_name_the_missing_one() {
-        assert!(parse("vortex://play?game=4").unwrap_err().to_string().contains("token"));
-        assert!(parse("vortex://play?token=x").unwrap_err().to_string().contains("game"));
+        assert!(parse("vortex://play?game=4")
+            .unwrap_err()
+            .to_string()
+            .contains("token"));
+        assert!(parse("vortex://play?token=x")
+            .unwrap_err()
+            .to_string()
+            .contains("game"));
     }
 
     #[test]
@@ -204,12 +225,12 @@ mod tests {
     #[test]
     fn rejects_tokens_containing_shell_metacharacters() {
         for hostile in [
-            "vortex://play?game=1&token=a%3Brm%20-rf%20%2F",   // a;rm -rf /
-            "vortex://play?game=1&token=%60id%60",             // `id`
-            "vortex://play?game=1&token=%24%28whoami%29",      // $(whoami)
-            "vortex://play?game=1&token=a%20b",                // embedded space
-            "vortex://play?game=1&token=a%22b",                // embedded quote
-            "vortex://play?game=1&token=a%0Ab",                // newline
+            "vortex://play?game=1&token=a%3Brm%20-rf%20%2F", // a;rm -rf /
+            "vortex://play?game=1&token=%60id%60",           // `id`
+            "vortex://play?game=1&token=%24%28whoami%29",    // $(whoami)
+            "vortex://play?game=1&token=a%20b",              // embedded space
+            "vortex://play?game=1&token=a%22b",              // embedded quote
+            "vortex://play?game=1&token=a%0Ab",              // newline
         ] {
             let err = parse(hostile).unwrap_err();
             assert_eq!(err.kind(), "uri", "accepted hostile token: {hostile}");
@@ -233,7 +254,10 @@ mod tests {
     #[test]
     fn unknown_parameters_survive_if_they_are_well_formed() {
         let link = parse("vortex://play?game=1&token=t&region=eu-west").unwrap();
-        assert_eq!(link.extra, vec![("region".to_string(), "eu-west".to_string())]);
+        assert_eq!(
+            link.extra,
+            vec![("region".to_string(), "eu-west".to_string())]
+        );
         assert!(link.to_uri().contains("region=eu-west"));
     }
 

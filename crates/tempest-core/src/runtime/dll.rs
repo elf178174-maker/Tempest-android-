@@ -8,7 +8,13 @@ use crate::{Result, TempestError};
 use std::io::Read;
 use std::path::Path;
 
-pub const DXVK_DLLS: &[&str] = &["d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"];
+pub const DXVK_DLLS: &[&str] = &[
+    "d3d8.dll",
+    "d3d9.dll",
+    "d3d10core.dll",
+    "d3d11.dll",
+    "dxgi.dll",
+];
 pub const VKD3D_DLLS: &[&str] = &["d3d12.dll", "d3d12core.dll"];
 
 pub const DXVK_OVERRIDES: &[(&str, &str)] = &[
@@ -83,7 +89,10 @@ pub fn install_dll(src: &Path, dest: &Path) -> Result<()> {
     if !is_pe(src) {
         return Err(TempestError::runtime(
             src.file_name().unwrap_or_default().to_string_lossy(),
-            format!("{} is not a Windows DLL — the download is corrupt", src.display()),
+            format!(
+                "{} is not a Windows DLL — the download is corrupt",
+                src.display()
+            ),
         ));
     }
     if let Some(parent) = dest.parent() {
@@ -122,17 +131,18 @@ pub fn install_dlls_from(src_dir: &Path, dest_dir: &Path, names: &[&str]) -> Res
 /// directories. On ARM64 the native builds avoid running the translation layer
 /// for every Direct3D call, so they are preferred; on x86-64 desktop only `x64`
 /// and `x32` exist.
-pub fn preferred_dll_dir(root: &Path, sixty_four_bit: bool, host_is_arm64: bool) -> Option<std::path::PathBuf> {
+pub fn preferred_dll_dir(
+    root: &Path,
+    sixty_four_bit: bool,
+    host_is_arm64: bool,
+) -> Option<std::path::PathBuf> {
     let candidates: &[&str] = match (sixty_four_bit, host_is_arm64) {
         (true, true) => &["arm64ec", "aarch64", "x64"],
         (true, false) => &["x64"],
         (false, true) => &["x32", "x86"],
         (false, false) => &["x32", "x86"],
     };
-    candidates
-        .iter()
-        .map(|d| root.join(d))
-        .find(|p| p.is_dir())
+    candidates.iter().map(|d| root.join(d)).find(|p| p.is_dir())
 }
 
 /// The registry fragment that sets DLL overrides.
@@ -141,7 +151,8 @@ pub fn preferred_dll_dir(root: &Path, sixty_four_bit: bool, host_is_arm64: bool)
 /// running `wine reg add` once per DLL: one guest process instead of seven,
 /// which on an emulated stack is the difference between instant and slow.
 pub fn overrides_reg(entries: &[(&str, &str)]) -> String {
-    let mut out = String::from("REGEDIT4\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\r\n");
+    let mut out =
+        String::from("REGEDIT4\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\r\n");
     for (name, mode) in entries {
         out.push_str(&format!("\"{name}\"=\"{mode}\"\r\n"));
     }
@@ -252,7 +263,11 @@ mod tests {
         assert!(!dest.join("d3d9.dll").exists());
 
         // A missing source directory is not an error.
-        assert!(install_dlls_from(&dir.path().join("nope"), &dest, DXVK_DLLS).unwrap().is_empty());
+        assert!(
+            install_dlls_from(&dir.path().join("nope"), &dest, DXVK_DLLS)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

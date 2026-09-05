@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tempest</string>
+
+    <string name="channel_session">Running game</string>
+    <string name="channel_session_description">Shown while a game is running so Android keeps the compatibility runtime alive.</string>
+
+    <string name="session_running">Game running</string>
+    <string name="session_starting">Starting…</string>
+    <string name="action_stop">Stop</string>
+</resources>

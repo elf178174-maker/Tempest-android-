@@ -91,7 +91,11 @@ pub fn log(level: Level, tag: &str, message: impl AsRef<str>) {
         }
         s.ring.push_back(entry);
         if let Some(path) = &s.file {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
                 writeln!(f, "{line}").ok();
             }
         }
@@ -103,10 +107,18 @@ pub fn guest_line(label: &str, stream: &str, line: &str) {
     log(Level::Debug, &format!("{label}/{stream}"), line);
 }
 
-pub fn debug(tag: &str, m: impl AsRef<str>) { log(Level::Debug, tag, m) }
-pub fn info(tag: &str, m: impl AsRef<str>) { log(Level::Info, tag, m) }
-pub fn warn(tag: &str, m: impl AsRef<str>) { log(Level::Warn, tag, m) }
-pub fn error(tag: &str, m: impl AsRef<str>) { log(Level::Error, tag, m) }
+pub fn debug(tag: &str, m: impl AsRef<str>) {
+    log(Level::Debug, tag, m)
+}
+pub fn info(tag: &str, m: impl AsRef<str>) {
+    log(Level::Info, tag, m)
+}
+pub fn warn(tag: &str, m: impl AsRef<str>) {
+    log(Level::Warn, tag, m)
+}
+pub fn error(tag: &str, m: impl AsRef<str>) {
+    log(Level::Error, tag, m)
+}
 
 /// Snapshot of the ring buffer, oldest first.
 pub fn snapshot() -> Vec<LogEntry> {
@@ -134,9 +146,20 @@ pub fn clear() {
 /// Environment variable / field names whose values must never be printed.
 pub fn is_sensitive_key(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
-    ["token", "session", "password", "passwd", "secret", "cookie", "authorization", "auth_key", "apikey", "api_key"]
-        .iter()
-        .any(|needle| k.contains(needle))
+    [
+        "token",
+        "session",
+        "password",
+        "passwd",
+        "secret",
+        "cookie",
+        "authorization",
+        "auth_key",
+        "apikey",
+        "api_key",
+    ]
+    .iter()
+    .any(|needle| k.contains(needle))
 }
 
 /// Mask secrets in an arbitrary line of text.
@@ -152,8 +175,17 @@ pub fn redact(input: &str) -> String {
     /// Keys whose value follows `=`, `:` or `": "` — query strings, cookies,
     /// environment assignments and JSON fields alike.
     const KEYS: &[&str] = &[
-        "session_token", "sessiontoken", "access_token", "refresh_token",
-        "fp_token", "token", "password", "passwd", "secret", "api_key", "apikey",
+        "session_token",
+        "sessiontoken",
+        "access_token",
+        "refresh_token",
+        "fp_token",
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "api_key",
+        "apikey",
     ];
     /// Header names whose entire value is sensitive.
     const HEADER_KEYS: &[&str] = &["authorization", "cookie", "set-cookie", "x-api-key"];
@@ -397,6 +429,9 @@ mod tests {
             "2024-02-29 12:34:56.789"
         );
         assert_eq!(format_timestamp(0), "1970-01-01 00:00:00.000");
-        assert_eq!(format_timestamp(1_000_000_000_000), "2001-09-09 01:46:40.000");
+        assert_eq!(
+            format_timestamp(1_000_000_000_000),
+            "2001-09-09 01:46:40.000"
+        );
     }
 }

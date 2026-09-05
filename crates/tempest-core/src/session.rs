@@ -152,7 +152,11 @@ impl SessionManager {
             }
             Ok(done) => {
                 let clean = matches!(done, ProcessStatus::Exited(0));
-                inner.snapshot.state = if clean { SessionState::Exited } else { SessionState::Failed };
+                inner.snapshot.state = if clean {
+                    SessionState::Exited
+                } else {
+                    SessionState::Failed
+                };
                 inner.snapshot.status_text = if clean {
                     "Game exited".to_string()
                 } else {
@@ -304,7 +308,10 @@ impl SessionManager {
 
         match self.platform.process().spawn(spec) {
             Ok(handle) => {
-                crate::logging::info("session", format!("receiver.exe started (pid {})", handle.pid()));
+                crate::logging::info(
+                    "session",
+                    format!("receiver.exe started (pid {})", handle.pid()),
+                );
                 self.inner.lock().expect("session lock").receiver = Some(handle);
             }
             // Not fatal: the game still runs, only notifications are lost.
@@ -317,7 +324,10 @@ impl SessionManager {
         let paths = self.platform.paths();
         let marker = paths.wine_prefix().join("system.reg");
         if !marker.exists() {
-            self.set_status(SessionState::PreparingPrefix, "Creating the Windows environment…");
+            self.set_status(
+                SessionState::PreparingPrefix,
+                "Creating the Windows environment…",
+            );
             crate::logging::info("session", "running wineboot to create the prefix");
             runtime.run_in_guest(
                 "wineboot",
@@ -330,7 +340,10 @@ impl SessionManager {
 
         let dxvk_marker = paths.wine_prefix().join(".tempest-dxvk-installed");
         if config.graphics.enable_dxvk && !dxvk_marker.exists() {
-            self.set_status(SessionState::PreparingPrefix, "Installing Direct3D support…");
+            self.set_status(
+                SessionState::PreparingPrefix,
+                "Installing Direct3D support…",
+            );
             self.install_graphics_dlls(runtime, config)?;
             std::fs::write(&dxvk_marker, config.graphics.vulkan_driver.as_str()).ok();
         }
@@ -364,7 +377,10 @@ impl SessionManager {
                      from Settings → Runtime",
                 ));
             }
-            crate::logging::info("session", format!("DXVK: installed {}", installed.join(", ")));
+            crate::logging::info(
+                "session",
+                format!("DXVK: installed {}", installed.join(", ")),
+            );
             overrides.extend_from_slice(dll::DXVK_OVERRIDES);
         }
 
@@ -554,7 +570,10 @@ mod tests {
 
     #[test]
     fn failure_explanation_always_points_somewhere_useful() {
-        let msg = explain_failure(&ProcessStatus::Exited(42), &["something unrecognised".into()]);
+        let msg = explain_failure(
+            &ProcessStatus::Exited(42),
+            &["something unrecognised".into()],
+        );
         assert!(msg.contains("42"));
         assert!(msg.contains("log"), "{msg}");
     }

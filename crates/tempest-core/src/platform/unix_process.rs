@@ -227,7 +227,10 @@ impl ProcessBackend for UnixProcessBackend {
                     StreamKind::Out(s) => Box::new(s),
                     StreamKind::Err(s) => Box::new(s),
                 };
-                for line in BufReader::new(reader).lines().map_while(std::result::Result::ok) {
+                for line in BufReader::new(reader)
+                    .lines()
+                    .map_while(std::result::Result::ok)
+                {
                     let line = crate::logging::redact(&line);
                     crate::logging::guest_line(&label, &tag, &line);
                     if tx.send(line).is_err() {
@@ -253,10 +256,7 @@ impl ProcessBackend for UnixProcessBackend {
     }
 
     fn is_running(&self, label: &str) -> bool {
-        self.live
-            .lock()
-            .map(|l| l.contains(label))
-            .unwrap_or(false)
+        self.live.lock().map(|l| l.contains(label)).unwrap_or(false)
     }
 
     fn terminate_all(&self) {
@@ -291,7 +291,9 @@ mod tests {
     #[test]
     fn spawn_captures_output_and_exit_code() {
         let backend = UnixProcessBackend::permissive();
-        let mut h = backend.spawn(sh("echo hello; echo oops >&2; exit 3")).unwrap();
+        let mut h = backend
+            .spawn(sh("echo hello; echo oops >&2; exit 3"))
+            .unwrap();
         let status = h.wait().unwrap();
         assert_eq!(status, ProcessStatus::Exited(3));
         std::thread::sleep(std::time::Duration::from_millis(150));
@@ -304,7 +306,11 @@ mod tests {
     fn is_running_tracks_children_without_pgrep() {
         let backend = UnixProcessBackend::permissive();
         let mut h = backend
-            .spawn(ProcessSpec::new("sleeper", "/bin/sh").arg("-c").arg("sleep 30"))
+            .spawn(
+                ProcessSpec::new("sleeper", "/bin/sh")
+                    .arg("-c")
+                    .arg("sleep 30"),
+            )
             .unwrap();
         assert!(backend.is_running("sleeper"));
         h.terminate().unwrap();
@@ -315,7 +321,11 @@ mod tests {
     fn terminate_reports_the_signal() {
         let backend = UnixProcessBackend::permissive();
         let mut h = backend
-            .spawn(ProcessSpec::new("sleeper", "/bin/sh").arg("-c").arg("sleep 30"))
+            .spawn(
+                ProcessSpec::new("sleeper", "/bin/sh")
+                    .arg("-c")
+                    .arg("sleep 30"),
+            )
             .unwrap();
         h.terminate().unwrap();
         let status = h.poll().unwrap();

@@ -273,7 +273,10 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeParseUri
             game_id: u32,
             display: String,
         }
-        Ok(SafeLink { game_id: link.game_id, display: link.redacted() })
+        Ok(SafeLink {
+            game_id: link.game_id,
+            display: link.redacted(),
+        })
     })();
     reply(&mut env, result)
 }
@@ -283,7 +286,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeIsSessio
     _env: JNIEnv,
     _class: JClass,
 ) -> jboolean {
-    bridge().map(|b| b.app.session().is_active()).unwrap_or(false) as jboolean
+    bridge()
+        .map(|b| b.app.session().is_active())
+        .unwrap_or(false) as jboolean
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +311,13 @@ struct Event<'a, T: Serialize> {
 
 fn emit<T: Serialize>(b: &'static Bridge, request_id: jlong, kind: &str, payload: Result<T>) {
     let event = match payload {
-        Ok(data) => Event { request_id, kind, data: Some(data), error: None, error_kind: None },
+        Ok(data) => Event {
+            request_id,
+            kind,
+            data: Some(data),
+            error: None,
+            error_kind: None,
+        },
         Err(e) => Event {
             request_id,
             kind,
@@ -502,10 +513,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativePlayUri(
         // synchronously and the UI can show the error without a round trip.
         let link = tempest_core::uri::parse(&raw)?;
         b.runtime.spawn(async move {
-            let outcome = b
-                .app
-                .play_uri(&raw)
-                .map(|_| b.app.session().snapshot());
+            let outcome = b.app.play_uri(&raw).map(|_| b.app.session().snapshot());
             emit(b, request_id, "launch", outcome);
         });
         Ok(link.game_id)
@@ -518,7 +526,10 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeStop(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().and_then(|b| b.app.stop().map(|()| "stopped")))
+    reply(
+        &mut env,
+        bridge().and_then(|b| b.app.stop().map(|()| "stopped")),
+    )
 }
 
 /// Cancel any in-flight download or catalogue refresh, and arm a fresh token so

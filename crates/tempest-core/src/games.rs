@@ -113,11 +113,7 @@ pub fn parse_game(id: u32, body: &serde_json::Value) -> Option<Game> {
 }
 
 /// Fetch a single game by id.
-pub async fn fetch_one(
-    client: &reqwest::Client,
-    token: &str,
-    id: u32,
-) -> Result<Option<Game>> {
+pub async fn fetch_one(client: &reqwest::Client, token: &str, id: u32) -> Result<Option<Game>> {
     let resp = client
         .get(crate::auth::game_api_url(id))
         .header("Cookie", crate::auth::session_cookie(token))
@@ -134,7 +130,9 @@ pub async fn fetch_one(
         return Ok(None);
     }
     if !status.is_success() {
-        return Err(TempestError::Network(format!("HTTP {status} for game {id}")));
+        return Err(TempestError::Network(format!(
+            "HTTP {status} for game {id}"
+        )));
     }
 
     let body: serde_json::Value = resp.json().await?;
@@ -158,10 +156,9 @@ pub async fn discover(
         }
 
         let ids: Vec<u32> = (next_id..next_id + BATCH).collect();
-        let results = futures_util::future::join_all(
-            ids.iter().map(|id| fetch_one(&client, token, *id)),
-        )
-        .await;
+        let results =
+            futures_util::future::join_all(ids.iter().map(|id| fetch_one(&client, token, *id)))
+                .await;
 
         for (id, result) in ids.iter().zip(results) {
             match result {
@@ -205,11 +202,14 @@ mod tests {
 
     #[test]
     fn parses_a_full_game_record() {
-        let g = parse_game(3, &json!({
-            "name": "Test Game",
-            "description": "A game for testing",
-            "image_url": "https://cdn.example/img.png"
-        }))
+        let g = parse_game(
+            3,
+            &json!({
+                "name": "Test Game",
+                "description": "A game for testing",
+                "image_url": "https://cdn.example/img.png"
+            }),
+        )
         .unwrap();
         assert_eq!(g.id, 3);
         assert_eq!(g.name, "Test Game");
@@ -220,7 +220,10 @@ mod tests {
     #[test]
     fn relative_image_paths_are_resolved_against_the_vortex_origin() {
         let g = parse_game(1, &json!({"name": "G", "image": "/static/g.png"})).unwrap();
-        assert_eq!(g.image_url.as_deref(), Some("https://playvortex.io/static/g.png"));
+        assert_eq!(
+            g.image_url.as_deref(),
+            Some("https://playvortex.io/static/g.png")
+        );
     }
 
     #[test]
@@ -240,9 +243,24 @@ mod tests {
     fn catalogue() -> GameCatalogue {
         GameCatalogue {
             games: vec![
-                Game { id: 1, name: "Half-Life".into(), description: Some("shooter".into()), image_url: None },
-                Game { id: 2, name: "Portal".into(), description: None, image_url: None },
-                Game { id: 3, name: "Team Fortress".into(), description: Some("A shooter too".into()), image_url: None },
+                Game {
+                    id: 1,
+                    name: "Half-Life".into(),
+                    description: Some("shooter".into()),
+                    image_url: None,
+                },
+                Game {
+                    id: 2,
+                    name: "Portal".into(),
+                    description: None,
+                    image_url: None,
+                },
+                Game {
+                    id: 3,
+                    name: "Team Fortress".into(),
+                    description: Some("A shooter too".into()),
+                    image_url: None,
+                },
             ],
             fetched_at: 0,
         }
@@ -253,7 +271,11 @@ mod tests {
         let c = catalogue();
         assert_eq!(c.search("portal").len(), 1);
         assert_eq!(c.search("PORTAL")[0].id, 2);
-        assert_eq!(c.search("shooter").len(), 2, "should match both descriptions");
+        assert_eq!(
+            c.search("shooter").len(),
+            2,
+            "should match both descriptions"
+        );
         assert_eq!(c.search("  ").len(), 3, "blank query returns everything");
         assert!(c.search("nothing here").is_empty());
     }

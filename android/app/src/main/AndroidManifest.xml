@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Downloading the runtime components and talking to the Vortex API. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      A game must keep running while the app is in the background: the user
+      switches to the X server app to see it. Without a foreground service
+      Android would freeze or kill the guest process within seconds.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Keeps the CPU awake while a game is running; released as soon as it stops. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+      The compatibility stack needs a 64-bit ARM device with a working Vulkan
+      driver. Declaring both keeps the app off store listings for devices where
+      it could never work, and makes the requirement explicit.
+    -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="true" />
+    <uses-feature android:name="android.hardware.vulkan.level" android:version="0" android:required="false" />
+
+    <application
+        android:name=".TempestApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Tempest"
+        android:largeHeap="true"
+        android:extractNativeLibs="true"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"
+            android:theme="@style/Theme.Tempest">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              Vortex deep links. A browser or another app firing
+              vortex://play?game=…&token=… opens Tempest directly.
+
+              The URI is treated as untrusted input: any installed app can send
+              one. It is validated and re-serialised in Rust before anything
+              acts on it.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vortex" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.GameSessionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a running Windows game and its compatibility runtime alive while the user is in another app, such as the X server that displays it." />
+        </service>
+    </application>
+</manifest>

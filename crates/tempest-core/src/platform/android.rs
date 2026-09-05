@@ -113,20 +113,24 @@ impl Platform for AndroidPlatform {
 /// The closures are supplied by `tempest-jni`, which calls back into the
 /// `SecureStore` Kotlin object backed by the Android Keystore.
 pub struct CallbackSecretStore {
-    #[allow(clippy::type_complexity)]
-    getter: Box<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>,
-    #[allow(clippy::type_complexity)]
-    setter: Box<dyn Fn(&str, &str) -> Result<()> + Send + Sync>,
-    #[allow(clippy::type_complexity)]
-    deleter: Box<dyn Fn(&str) -> Result<()> + Send + Sync>,
+    getter: SecretGetter,
+    setter: SecretSetter,
+    deleter: SecretDeleter,
     description: String,
 }
 
+/// Reads a secret out of the platform's secure store.
+pub type SecretGetter = Box<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>;
+/// Writes (or replaces) a secret.
+pub type SecretSetter = Box<dyn Fn(&str, &str) -> Result<()> + Send + Sync>;
+/// Removes a secret.
+pub type SecretDeleter = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
+
 impl CallbackSecretStore {
     pub fn new(
-        getter: Box<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>,
-        setter: Box<dyn Fn(&str, &str) -> Result<()> + Send + Sync>,
-        deleter: Box<dyn Fn(&str) -> Result<()> + Send + Sync>,
+        getter: SecretGetter,
+        setter: SecretSetter,
+        deleter: SecretDeleter,
         description: impl Into<String>,
     ) -> Self {
         Self {
@@ -184,8 +188,12 @@ mod tests {
 
         // Nothing may be hard-coded: each root must sit under what Kotlin gave us.
         assert!(paths.root().starts_with(dir.path()));
-        assert!(paths.config_dir().starts_with(dir.path().join("data/user/0")));
-        assert!(paths.cache_dir().starts_with(dir.path().join("data/user/0")));
+        assert!(paths
+            .config_dir()
+            .starts_with(dir.path().join("data/user/0")));
+        assert!(paths
+            .cache_dir()
+            .starts_with(dir.path().join("data/user/0")));
         assert!(paths.native_bin_dir().ends_with("lib/arm64"));
         assert!(paths.guest_rootfs().starts_with(paths.runtime_dir()));
     }
@@ -198,7 +206,10 @@ mod tests {
         let mut other = ctx(dir.path());
         other.files_dir = dir.path().join("data/user/10/io.tempest.android/files");
         let p = AndroidPlatform::new(other, Box::new(MemorySecretStore::default())).unwrap();
-        assert!(p.paths().root().starts_with(dir.path().join("data/user/10")));
+        assert!(p
+            .paths()
+            .root()
+            .starts_with(dir.path().join("data/user/10")));
     }
 
     #[test]
@@ -225,9 +236,15 @@ mod tests {
         let mut c = ctx(dir.path());
         c.games_dir = Some(dir.path().join("storage/sdcard/tempest"));
         let p = AndroidPlatform::new(c, Box::new(MemorySecretStore::default())).unwrap();
-        assert_eq!(p.paths().games_dir(), dir.path().join("storage/sdcard/tempest"));
+        assert_eq!(
+            p.paths().games_dir(),
+            dir.path().join("storage/sdcard/tempest")
+        );
         // Config stays on internal storage even so.
-        assert!(p.paths().config_dir().starts_with(dir.path().join("data/user/0")));
+        assert!(p
+            .paths()
+            .config_dir()
+            .starts_with(dir.path().join("data/user/0")));
     }
 
     #[test]
@@ -239,8 +256,12 @@ mod tests {
         assert!(p.process().can_execute(&native.join("libproot.so")));
         // The classic Android mistake: downloading a binary into app data and
         // trying to run it. The platform forbids this, so we must too.
-        assert!(!p.process().can_execute(&p.paths().runtime_dir().join("rootfs/usr/bin/wine")));
-        assert!(!p.process().can_execute(std::path::Path::new("/system/bin/sh")));
+        assert!(!p
+            .process()
+            .can_execute(&p.paths().runtime_dir().join("rootfs/usr/bin/wine")));
+        assert!(!p
+            .process()
+            .can_execute(std::path::Path::new("/system/bin/sh")));
     }
 
     #[test]
@@ -279,7 +300,10 @@ mod tests {
         assert_eq!(info.kind, HostKind::Android);
         assert_eq!(info.device_model.as_deref(), Some("POCO F7 Ultra"));
         assert_eq!(info.os_description, "Android 15 (API 35)");
-        assert!(info.needs_x86_translation, "arm64 must report needing translation");
+        assert!(
+            info.needs_x86_translation,
+            "arm64 must report needing translation"
+        );
     }
 
     #[test]
@@ -295,8 +319,14 @@ mod tests {
     fn uri_registration_is_a_manifest_concern_not_a_runtime_one() {
         let dir = tempfile::tempdir().unwrap();
         let p = platform(dir.path());
-        assert_eq!(p.register_uri_handler().unwrap(), UriRegistration::ManifestDeclared);
-        assert_eq!(p.uri_handler_status().unwrap(), UriRegistration::ManifestDeclared);
+        assert_eq!(
+            p.register_uri_handler().unwrap(),
+            UriRegistration::ManifestDeclared
+        );
+        assert_eq!(
+            p.uri_handler_status().unwrap(),
+            UriRegistration::ManifestDeclared
+        );
     }
 
     #[test]
@@ -323,10 +353,7 @@ mod tests {
         assert_eq!(store.get("k").unwrap().as_deref(), Some("value"));
         store.set("k", "v").unwrap();
         store.delete("k").unwrap();
-        assert_eq!(
-            *log.lock().unwrap(),
-            vec!["get k", "set k=v", "del k"]
-        );
+        assert_eq!(*log.lock().unwrap(), vec!["get k", "set k=v", "del k"]);
         assert!(store.describe().contains("Keystore"));
     }
 

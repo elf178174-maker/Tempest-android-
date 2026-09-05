@@ -139,7 +139,10 @@ async fn run(app: &Tempest, command: Commands) -> tempest_core::Result<()> {
         }
 
         Commands::Play { game_id } => {
-            println!("{} Fetching the launch link for game {game_id}…", "[INFO]".cyan());
+            println!(
+                "{} Fetching the launch link for game {game_id}…",
+                "[INFO]".cyan()
+            );
             app.play(game_id).await?;
             follow_session(app)
         }
@@ -150,9 +153,7 @@ async fn run(app: &Tempest, command: Commands) -> tempest_core::Result<()> {
             follow_session(app)
         }
 
-        Commands::Update => {
-            install_component(app, ComponentId::Vortex).await
-        }
+        Commands::Update => install_component(app, ComponentId::Vortex).await,
 
         Commands::Runtime { component } => match component {
             None => {
@@ -190,7 +191,8 @@ async fn run(app: &Tempest, command: Commands) -> tempest_core::Result<()> {
 
         Commands::Setup => {
             println!("{}", "=== Tempest Setup ===".bold().cyan());
-            app.install_required(Some(&progress_sink()), &CancelToken::new()).await?;
+            app.install_required(Some(&progress_sink()), &CancelToken::new())
+                .await?;
             match app.platform().register_uri_handler() {
                 Ok(r) => println!("{} vortex:// handler: {r:?}", "[PASS]".green()),
                 Err(e) => println!("{} could not register vortex://: {e}", "[WARN]".yellow()),
@@ -409,7 +411,9 @@ fn prompt_hidden(label: &str) -> String {
 
 fn confirm(msg: &str) -> bool {
     matches!(
-        prompt(&format!("{} [y/N] ", msg.yellow())).to_lowercase().as_str(),
+        prompt(&format!("{} [y/N] ", msg.yellow()))
+            .to_lowercase()
+            .as_str(),
         "y" | "yes"
     )
 }

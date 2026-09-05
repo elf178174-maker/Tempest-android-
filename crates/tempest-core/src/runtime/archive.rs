@@ -207,7 +207,9 @@ fn extract_tar<R: Read>(reader: R, dest: &Path, strip_components: usize) -> Resu
                     continue;
                 };
                 if !link_target_is_contained(dest, &out, &target) {
-                    report.skipped.push(format!("{} -> {}", raw.display(), target.display()));
+                    report
+                        .skipped
+                        .push(format!("{} -> {}", raw.display(), target.display()));
                     continue;
                 }
                 if let Some(parent) = out.parent() {
@@ -221,8 +223,8 @@ fn extract_tar<R: Read>(reader: R, dest: &Path, strip_components: usize) -> Resu
                     std::os::unix::fs::symlink(&target, &out)?;
                 } else {
                     // Hard link targets are archive-relative.
-                    let Some(link_src) = strip(&target, strip_components)
-                        .and_then(|t| safe_join(dest, &t))
+                    let Some(link_src) =
+                        strip(&target, strip_components).and_then(|t| safe_join(dest, &t))
                     else {
                         report.skipped.push(raw.display().to_string());
                         continue;
@@ -236,7 +238,9 @@ fn extract_tar<R: Read>(reader: R, dest: &Path, strip_components: usize) -> Resu
             // Character/block devices, FIFOs, sockets: never wanted, and
             // creating them would need privileges we do not have anyway.
             other => {
-                report.skipped.push(format!("{} ({other:?})", raw.display()));
+                report
+                    .skipped
+                    .push(format!("{} ({other:?})", raw.display()));
             }
         }
     }
@@ -294,7 +298,10 @@ pub fn extract_deb(archive: &Path, dest: &Path, strip_components: usize) -> Resu
     let bytes = std::fs::read(archive)?;
     let (name, data) = find_ar_member(&bytes, "data.tar")?;
 
-    let tmp = dest.join(format!(".{}.tmp", crate::net::sha256_bytes(name.as_bytes())));
+    let tmp = dest.join(format!(
+        ".{}.tmp",
+        crate::net::sha256_bytes(name.as_bytes())
+    ));
     std::fs::create_dir_all(dest)?;
     std::fs::write(&tmp, data)?;
 
@@ -327,7 +334,10 @@ fn find_ar_member<'a>(bytes: &'a [u8], prefix: &str) -> Result<(String, &'a [u8]
     let mut pos = MAGIC.len();
     while pos + 60 <= bytes.len() {
         let header = &bytes[pos..pos + 60];
-        let name = String::from_utf8_lossy(&header[0..16]).trim().trim_end_matches('/').to_string();
+        let name = String::from_utf8_lossy(&header[0..16])
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
         let size: usize = String::from_utf8_lossy(&header[48..58])
             .trim()
             .parse()
@@ -343,7 +353,9 @@ fn find_ar_member<'a>(bytes: &'a [u8], prefix: &str) -> Result<(String, &'a [u8]
         // Members are padded to an even offset.
         pos = end + (end % 2);
     }
-    Err(TempestError::other(format!("no '{prefix}*' member in the package")))
+    Err(TempestError::other(format!(
+        "no '{prefix}*' member in the package"
+    )))
 }
 
 #[cfg(test)]
@@ -464,8 +476,14 @@ mod tests {
 
         let report = extract(&archive, &dest, Format::Tar, 0).unwrap();
         assert!(!outside.exists(), "archive escaped the destination");
-        assert!(!dir.path().join("b/escape").exists(), "archive escaped via a/../..");
-        assert!(dest.join("good.txt").exists(), "legitimate entry was dropped");
+        assert!(
+            !dir.path().join("b/escape").exists(),
+            "archive escaped via a/../.."
+        );
+        assert!(
+            dest.join("good.txt").exists(),
+            "legitimate entry was dropped"
+        );
         assert_eq!(std::fs::read(dest.join("good.txt")).unwrap(), b"legit");
         assert_eq!(report.files, 1);
         assert_eq!(report.skipped.len(), 3, "skipped: {:?}", report.skipped);
@@ -531,7 +549,10 @@ mod tests {
             builder.finish().unwrap();
         }
         extract(&archive, &dest, Format::Tar, 0).unwrap();
-        let mode = std::fs::metadata(dest.join("bin/run")).unwrap().permissions().mode();
+        let mode = std::fs::metadata(dest.join("bin/run"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o111, 0o111, "execute bit lost");
         assert_eq!(mode & 0o7000, 0, "setuid bit survived extraction");
     }
@@ -552,7 +573,10 @@ mod tests {
         }
         let report = extract(&archive, &dest, Format::Zip, 1).unwrap();
         assert_eq!(report.files, 1);
-        assert_eq!(std::fs::read(dest.join("Vortex.exe")).unwrap(), b"MZ\x90\x00");
+        assert_eq!(
+            std::fs::read(dest.join("Vortex.exe")).unwrap(),
+            b"MZ\x90\x00"
+        );
     }
 
     #[test]
@@ -560,7 +584,10 @@ mod tests {
         // Build a minimal ar archive with three members.
         let mut ar = Vec::from(*b"!<arch>\n");
         let mut push = |name: &str, body: &[u8]| {
-            let mut header = format!("{name:<16}0           0     0     100644  {:<10}", body.len());
+            let mut header = format!(
+                "{name:<16}0           0     0     100644  {:<10}",
+                body.len()
+            );
             header.push_str("`\n");
             ar.extend_from_slice(header.as_bytes());
             ar.extend_from_slice(body);

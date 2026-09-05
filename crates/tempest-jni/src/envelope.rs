@@ -15,7 +15,11 @@ pub fn ok_json<T: Serialize>(value: &T) -> String {
         ok: bool,
         data: &'a T,
     }
-    serde_json::to_string(&Ok { ok: true, data: value }).unwrap_or_else(|e| {
+    serde_json::to_string(&Ok {
+        ok: true,
+        data: value,
+    })
+    .unwrap_or_else(|e| {
         // Serialising our own types should not fail; if it somehow does, the
         // caller still gets a well-formed envelope describing the problem.
         format!(

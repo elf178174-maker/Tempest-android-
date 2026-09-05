@@ -77,7 +77,9 @@ pub fn encrypt(key_dir: &Path, plaintext: &str) -> crate::Result<String> {
 pub fn decrypt(key_dir: &Path, encoded: &str) -> Option<String> {
     let key = load_or_create_key(key_dir).ok()?;
     let cipher = Aes256Gcm::new_from_slice(&key).ok()?;
-    let combined = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    let combined = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
     if combined.len() <= NONCE_LEN {
         return None;
     }
@@ -115,7 +117,11 @@ mod tests {
         let b = tempfile::tempdir().unwrap();
         assert_eq!(decrypt(a.path(), "not base64 at all!"), None);
         let ct = encrypt(a.path(), "secret").unwrap();
-        assert_eq!(decrypt(b.path(), &ct), None, "decrypted under the wrong key");
+        assert_eq!(
+            decrypt(b.path(), &ct),
+            None,
+            "decrypted under the wrong key"
+        );
     }
 
     #[test]

@@ -64,7 +64,9 @@ pub async fn login(platform: &PlatformRef, username: &str, password: &str) -> Re
     secrets.set(USERNAME_KEY, username.trim())?;
     crate::logging::info("auth", format!("signed in as {}", username.trim()));
 
-    Ok(Session { username: username.trim().to_string() })
+    Ok(Session {
+        username: username.trim().to_string(),
+    })
 }
 
 /// Perform the login exchange and return the raw session token.
@@ -140,9 +142,8 @@ pub fn stored_token(platform: &PlatformRef) -> Result<Option<String>> {
 
 /// Require a token, with an actionable error when there is none.
 pub fn require_token(platform: &PlatformRef) -> Result<String> {
-    stored_token(platform)?.ok_or_else(|| {
-        TempestError::Auth("you are not signed in — sign in to Vortex first".into())
-    })
+    stored_token(platform)?
+        .ok_or_else(|| TempestError::Auth("you are not signed in — sign in to Vortex first".into()))
 }
 
 pub fn logout(platform: &PlatformRef) -> Result<()> {

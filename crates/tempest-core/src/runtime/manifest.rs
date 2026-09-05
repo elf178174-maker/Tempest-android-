@@ -82,11 +82,17 @@ impl ComponentId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// A fixed URL with a pinned digest. Preferred: reproducible and verifiable.
-    Pinned { url: &'static str, sha256: &'static str },
+    Pinned {
+        url: &'static str,
+        sha256: &'static str,
+    },
     /// Resolved at install time from a GitHub release. Used where upstream does
     /// not publish stable per-version URLs we can pin ahead of time; the digest
     /// of whatever arrives is recorded and shown in the UI.
-    GithubLatest { repo: &'static str, asset_suffix: &'static str },
+    GithubLatest {
+        repo: &'static str,
+        asset_suffix: &'static str,
+    },
     /// Fetched from Vortex itself, authenticated with the user's session.
     VortexDownload { url: &'static str },
     /// Installed with `apt-get` *inside* the guest filesystem.
@@ -302,7 +308,11 @@ mod tests {
                 "{} upstream is not an https URL",
                 c.display_name
             );
-            assert!(!c.purpose.is_empty(), "{} has no purpose text", c.display_name);
+            assert!(
+                !c.purpose.is_empty(),
+                "{} has no purpose text",
+                c.display_name
+            );
         }
     }
 
@@ -319,7 +329,11 @@ mod tests {
                 Source::Pinned { url, .. } | Source::VortexDownload { url } => url,
                 Source::GithubLatest { .. } | Source::GuestPackages { .. } => continue,
             };
-            let host = url::Url::parse(url).unwrap().host_str().unwrap().to_string();
+            let host = url::Url::parse(url)
+                .unwrap()
+                .host_str()
+                .unwrap()
+                .to_string();
             assert!(
                 ALLOWED.contains(&host.as_str()),
                 "{} downloads from an unapproved host: {host}",

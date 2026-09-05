@@ -33,7 +33,7 @@ use tempest_core::{PlatformRef, Result, TempestError};
 mod envelope;
 mod secrets;
 
-use envelope::{err_json, ok_json};
+use envelope::guard;
 
 /// Process-wide state. The app is a single Tempest instance; holding it in a
 /// static avoids handing Kotlin a raw pointer it could use after free.
@@ -68,7 +68,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeInit(
     config_json: JString,
     callback: JObject,
 ) -> jstring {
-    let result = (|| -> Result<String> {
+    reply(&mut env, "init", |env| -> Result<String> {
         if BRIDGE.get().is_some() {
             // Re-initialising after an Activity restart is normal and harmless.
             return Ok("already-initialised".to_string());
@@ -145,9 +145,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeInit(
             .map_err(|_| TempestError::other("the core was initialised twice"))?;
 
         Ok("initialised".to_string())
-    })();
-
-    reply(&mut env, result)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +157,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeStatus(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().map(|b| b.app.status()))
+    reply(&mut env, "status", |_| bridge().map(|b| b.app.status()))
 }
 
 #[no_mangle]
@@ -167,7 +165,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeComponen
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().map(|b| b.app.component_status()))
+    reply(&mut env, "components", |_| {
+        bridge().map(|b| b.app.component_status())
+    })
 }
 
 #[no_mangle]
@@ -175,7 +175,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeDiagnost
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().map(|b| b.app.diagnostics()))
+    reply(&mut env, "diagnostics", |_| {
+        bridge().map(|b| b.app.diagnostics())
+    })
 }
 
 #[no_mangle]
@@ -183,7 +185,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeConfig(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().map(|b| b.app.config()))
+    reply(&mut env, "config", |_| bridge().map(|b| b.app.config()))
 }
 
 #[no_mangle]
@@ -192,15 +194,14 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeSaveConf
     _class: JClass,
     config_json: JString,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "saveConfig", |env| {
         let b = bridge()?;
-        let raw = jstring_to_string(&mut env, &config_json)?;
+        let raw = jstring_to_string(env, &config_json)?;
         let cfg: tempest_core::config::Config =
             serde_json::from_str(&raw).map_err(|e| TempestError::Config(e.to_string()))?;
         b.app.save_config(&cfg)?;
         Ok(cfg)
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -208,7 +209,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeCachedGa
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().map(|b| b.app.cached_games()))
+    reply(&mut env, "cachedGames", |_| {
+        bridge().map(|b| b.app.cached_games())
+    })
 }
 
 #[no_mangle]
@@ -217,12 +220,11 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeSearch(
     _class: JClass,
     query: JString,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "search", |env| {
         let b = bridge()?;
-        let q = jstring_to_string(&mut env, &query)?;
+        let q = jstring_to_string(env, &query)?;
         Ok(b.app.search(&q))
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -230,7 +232,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeExportLo
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().map(|b| b.app.export_logs()))
+    reply(&mut env, "exportLogs", |_| {
+        bridge().map(|b| b.app.export_logs())
+    })
 }
 
 #[no_mangle]
@@ -238,13 +242,12 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeClearLog
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(
-        &mut env,
+    reply(&mut env, "clearLogs", |_| {
         bridge().map(|b| {
             b.app.clear_logs();
             "cleared"
-        }),
-    )
+        })
+    })
 }
 
 #[no_mangle]
@@ -252,7 +255,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeClearCac
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(&mut env, bridge().and_then(|b| b.app.clear_cache()))
+    reply(&mut env, "clearCache", |_| {
+        bridge().and_then(|b| b.app.clear_cache())
+    })
 }
 
 /// Validate a URI without launching, so the UI can reject a bad paste inline.
@@ -262,8 +267,8 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeParseUri
     _class: JClass,
     uri: JString,
 ) -> jstring {
-    let result = (|| {
-        let raw = jstring_to_string(&mut env, &uri)?;
+    reply(&mut env, "parseUri", |env| {
+        let raw = jstring_to_string(env, &uri)?;
         let link = tempest_core::uri::parse(&raw)?;
         // The token never crosses back to Kotlin: the UI has no use for it,
         // and keeping it on this side means it cannot end up in a Bundle,
@@ -277,8 +282,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeParseUri
             game_id: link.game_id,
             display: link.redacted(),
         })
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -373,17 +377,16 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeLogin(
     username: JString,
     password: JString,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "login", |env| {
         let b = bridge()?;
-        let user = jstring_to_string(&mut env, &username)?;
-        let pass = jstring_to_string(&mut env, &password)?;
+        let user = jstring_to_string(env, &username)?;
+        let pass = jstring_to_string(env, &password)?;
         b.runtime.spawn(async move {
             let outcome = b.app.login(&user, &pass).await;
             emit(b, request_id, "login", outcome);
         });
         Ok("started")
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -391,10 +394,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeLogout(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(
-        &mut env,
-        bridge().and_then(|b| b.app.logout().map(|()| "signed-out")),
-    )
+    reply(&mut env, "logout", |_| {
+        bridge().and_then(|b| b.app.logout().map(|()| "signed-out"))
+    })
 }
 
 #[no_mangle]
@@ -403,7 +405,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeRefreshG
     _class: JClass,
     request_id: jlong,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "refreshGames", |_| {
         let b = bridge()?;
         let cancel = b.cancel.lock().expect("cancel lock").clone();
         b.runtime.spawn(async move {
@@ -419,8 +421,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeRefreshG
             emit(b, request_id, "games", outcome);
         });
         Ok("started")
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -430,9 +431,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeInstallC
     request_id: jlong,
     component: JString,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "installComponent", |env| {
         let b = bridge()?;
-        let id = jstring_to_string(&mut env, &component)?;
+        let id = jstring_to_string(env, &component)?;
         let cancel = b.cancel.lock().expect("cancel lock").clone();
         b.runtime.spawn(async move {
             let sink = install_sink(b, request_id);
@@ -444,8 +445,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeInstallC
             emit(b, request_id, "install", outcome.map(|()| id));
         });
         Ok("started")
-    })();
-    reply(&mut env, result)
+    })
 }
 
 fn install_sink(b: &'static Bridge, request_id: jlong) -> ProgressSink {
@@ -468,13 +468,12 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeUninstal
     _class: JClass,
     component: JString,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "uninstallComponent", |env| {
         let b = bridge()?;
-        let id = jstring_to_string(&mut env, &component)?;
+        let id = jstring_to_string(env, &component)?;
         b.app.uninstall_component(&id)?;
         Ok(id)
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -484,7 +483,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativePlay(
     request_id: jlong,
     game_id: jint,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "play", |_| {
         let b = bridge()?;
         if game_id < 0 {
             return Err(TempestError::other("game id must not be negative"));
@@ -495,8 +494,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativePlay(
             emit(b, request_id, "launch", outcome);
         });
         Ok("started")
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -506,9 +504,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativePlayUri(
     request_id: jlong,
     uri: JString,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "playUri", |env| {
         let b = bridge()?;
-        let raw = jstring_to_string(&mut env, &uri)?;
+        let raw = jstring_to_string(env, &uri)?;
         // Parse on the calling thread so an invalid link is rejected
         // synchronously and the UI can show the error without a round trip.
         let link = tempest_core::uri::parse(&raw)?;
@@ -517,8 +515,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativePlayUri(
             emit(b, request_id, "launch", outcome);
         });
         Ok(link.game_id)
-    })();
-    reply(&mut env, result)
+    })
 }
 
 #[no_mangle]
@@ -526,10 +523,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeStop(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    reply(
-        &mut env,
-        bridge().and_then(|b| b.app.stop().map(|()| "stopped")),
-    )
+    reply(&mut env, "stop", |_| {
+        bridge().and_then(|b| b.app.stop().map(|()| "stopped"))
+    })
 }
 
 /// Cancel any in-flight download or catalogue refresh, and arm a fresh token so
@@ -539,14 +535,13 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeCancel(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    let result = (|| {
+    reply(&mut env, "cancel", |_| {
         let b = bridge()?;
         let mut guard = b.cancel.lock().expect("cancel lock");
         guard.cancel();
         *guard = CancelToken::new();
         Ok("cancelled")
-    })();
-    reply(&mut env, result)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -562,11 +557,21 @@ fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> Result<String> {
         .map_err(|e| TempestError::other(format!("could not read a Java string: {e}")))
 }
 
-/// Serialise a result into the JSON envelope and hand it back as a `jstring`.
-fn reply<T: Serialize>(env: &mut JNIEnv, result: Result<T>) -> jstring {
-    let json = match result {
-        Ok(value) => ok_json(&value),
-        Err(e) => err_json(&e),
+/// Run a bridge call and hand the JSON envelope back as a `jstring`.
+///
+/// Every entry point goes through here, which is what makes the panic guard
+/// universal: a bug anywhere in the core surfaces as an error card rather than
+/// unwinding across the FFI boundary and taking the process with it.
+fn reply<T: Serialize>(
+    env: &mut JNIEnv,
+    what: &str,
+    call: impl FnOnce(&mut JNIEnv) -> Result<T>,
+) -> jstring {
+    let json = {
+        // Reborrowed so the closure's use of `env` ends before `new_string`
+        // needs it again.
+        let env = &mut *env;
+        guard(what, move || call(env))
     };
     match env.new_string(&json) {
         Ok(s) => s.into_raw(),

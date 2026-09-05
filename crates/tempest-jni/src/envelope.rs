@@ -9,6 +9,39 @@
 use serde::Serialize;
 use tempest_core::TempestError;
 
+/// Run a bridge call, converting a panic into an error rather than letting it
+/// cross the FFI boundary.
+///
+/// Unwinding out of an `extern "system"` function aborts the process, which for
+/// an Android app means the whole thing disappears with no explanation. A
+/// panic in the core is a bug either way, but the user is far better served by
+/// an error card naming it than by a silent disappearance — and the panic
+/// message reaches the log, which is what makes the bug reportable.
+pub fn guard<T: Serialize>(what: &str, f: impl FnOnce() -> tempest_core::Result<T>) -> String {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(Ok(value)) => ok_json(&value),
+        Ok(Err(e)) => err_json(&e),
+        Err(payload) => {
+            let detail = panic_message(&payload);
+            tempest_core::logging::error("jni", format!("panic in {what}: {detail}"));
+            err_json(&TempestError::other(format!(
+                "Tempest hit an internal error in {what} ({detail}). \
+                 This is a bug — please report it with the log."
+            )))
+        }
+    }
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "no message".to_string()
+    }
+}
+
 pub fn ok_json<T: Serialize>(value: &T) -> String {
     #[derive(Serialize)]
     struct Ok<'a, T: Serialize> {
@@ -46,6 +79,41 @@ fn json_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guard_passes_success_through() {
+        let json = guard("test", || Ok(42));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["data"], 42);
+    }
+
+    #[test]
+    fn guard_passes_errors_through_with_their_kind() {
+        let json = guard("test", || {
+            Err::<i32, _>(TempestError::Auth("expired".into()))
+        });
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["kind"], "auth");
+    }
+
+    #[test]
+    fn guard_turns_a_panic_into_a_reportable_error_instead_of_an_abort() {
+        // Silence the default hook so the test output stays readable.
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let json = guard("the widget", || -> tempest_core::Result<i32> {
+            panic!("something went badly wrong")
+        });
+        std::panic::set_hook(previous);
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["ok"], false);
+        let message = parsed["error"].as_str().unwrap();
+        assert!(message.contains("the widget"), "{message}");
+        assert!(message.contains("something went badly wrong"), "{message}");
+        assert!(message.contains("report it"), "{message}");
+    }
 
     #[test]
     fn success_envelope_wraps_the_payload() {

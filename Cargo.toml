@@ -40,4 +40,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# Deliberately *not* panic = "abort". The JNI bridge catches panics at the
+# boundary and turns them into an error the UI can show; with abort, an
+# unexpected panic anywhere in the core would take the whole app down instead.
+panic = "unwind"

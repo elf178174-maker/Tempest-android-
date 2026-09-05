@@ -1,0 +1,37 @@
+[package]
+name = "tempest-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Platform-agnostic core for Tempest: Vortex authentication, game discovery, runtime management and session launching."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+aes-gcm.workspace = true
+rand.workspace = true
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
+zstd.workspace = true
+xz2.workspace = true
+futures-util.workspace = true
+libc.workspace = true
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "stream", "rustls-tls-webpki-roots", "charset", "http2"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+
+[lints.clippy]
+all = "deny"

@@ -1,0 +1,25 @@
+/target
+target/
+# Development environment
+.idea/
+.vscode/
+*.iml
+setup.txt
+
+# Tempest runtime artifacts
+*.dll.bak
+/assets/*.tmp
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+android/app/src/main/jniLibs/
+captures/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db

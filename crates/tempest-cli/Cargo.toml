@@ -1,0 +1,24 @@
+[package]
+name = "tempest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Linux launcher for Vortex"
+
+[[bin]]
+name = "tempest"
+path = "src/main.rs"
+
+[dependencies]
+tempest-core = { path = "../tempest-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+colored = "3"
+indicatif = "0.17"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libc.workspace = true
+serde_json.workspace = true
+
+[lints.clippy]
+all = "deny"

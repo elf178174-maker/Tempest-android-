@@ -1,0 +1,25 @@
+[package]
+name = "tempest-jni"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "JNI bridge exposing tempest-core to the Android application layer"
+
+[lib]
+name = "tempest_jni"
+crate-type = ["cdylib"]
+
+[dependencies]
+tempest-core = { path = "../tempest-core" }
+jni = "0.21"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
+log = "0.4"
+
+[lints.clippy]
+all = "deny"

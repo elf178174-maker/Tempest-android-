@@ -53,10 +53,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Unsigned unless a keystore is supplied out of band. The project
-            // must build with no secrets configured, so there is deliberately
-            // no signing config wired up here.
-            signingConfig = null
+            // Left unsigned. The project must build with no secret configured
+            // anywhere, so no signing config is wired up.
         }
     }
 

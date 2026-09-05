@@ -42,6 +42,9 @@ object TempestBridge {
         isLenient = true
         encodeDefaults = true
         explicitNulls = false
+        // The Rust side tags InstallPhase with #[serde(tag = "phase")], so the
+        // discriminator is "phase", not kotlinx's default of "type".
+        classDiscriminator = "phase"
     }
 
     private val _events = MutableSharedFlow<BridgeEvent>(

@@ -84,10 +84,7 @@ private fun BottomBar(state: UiState, viewModel: TempestViewModel) {
             selected = state.screen == Screen.Session,
             onClick = { viewModel.navigate(Screen.Session) },
             icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
-            label = { Text("Session") },
-            // A dot on the tab when something is running, so the state is
-            // visible without opening it.
-            alwaysShowLabel = true,
+            label = { Text(if (state.session?.isActive == true) "Running" else "Session") },
         )
         NavigationBarItem(
             selected = state.screen == Screen.Runtime,

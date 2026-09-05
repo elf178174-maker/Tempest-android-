@@ -35,7 +35,12 @@ class TempestRepository(context: Context) {
 
     private val appContext = context.applicationContext
     private val storagePrefs = StoragePreferences(appContext)
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    // Must match the bridge's configuration: InstallPhase is tagged "phase".
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        classDiscriminator = "phase"
+    }
 
     private val _initError = MutableStateFlow<String?>(null)
 

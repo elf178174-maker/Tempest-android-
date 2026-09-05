@@ -30,7 +30,11 @@ import org.junit.Test
  */
 class ModelsTest {
 
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        classDiscriminator = "phase"
+    }
 
     @Test
     fun `success envelope carries its payload`() {

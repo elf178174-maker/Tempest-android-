@@ -67,11 +67,17 @@ fun DiagnosticsScreen(state: UiState, viewModel: TempestViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedButton(onClick = { viewModel.navigate(state.screen) }) { Text("Re-run") }
-            OutlinedButton(onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Tempest diagnostics", state.logs))
-            }) {
-                Text("Copy")
+            OutlinedButton(
+                onClick = {
+                    val clipboard =
+                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(
+                        ClipData.newPlainText("Tempest diagnostics", state.logs),
+                    )
+                },
+                enabled = state.logs.isNotBlank(),
+            ) {
+                Text("Copy everything")
             }
         }
 

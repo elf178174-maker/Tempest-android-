@@ -351,7 +351,10 @@ class TempestViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadDiagnostics() {
         viewModelScope.launch {
             runGuarded(busy = true) {
-                _state.update { it.copy(diagnostics = repo.diagnostics()) }
+                // exportLogs() puts the diagnostics report at the top, so
+                // loading it here is what makes this screen's Copy button
+                // produce something even if the Logs screen was never opened.
+                _state.update { it.copy(diagnostics = repo.diagnostics(), logs = repo.exportLogs()) }
             }
         }
     }

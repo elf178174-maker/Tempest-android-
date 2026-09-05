@@ -21,7 +21,19 @@ pub struct Tempest {
     platform: PlatformRef,
     session: SessionManager,
     runtime: RuntimeManager,
+    /// Cached result of walking the Tempest directory tree.
+    ///
+    /// `status()` is polled roughly twice a second while a game is running, and
+    /// measuring disk usage means stat-ing every file under a tree that holds a
+    /// Linux userland, a Wine prefix and the games — tens of thousands of
+    /// entries. Recomputing that on every poll would compete with the game for
+    /// I/O for no benefit, since the number only changes when something is
+    /// installed or removed.
+    storage_cache: std::sync::Mutex<Option<(std::time::Instant, u64)>>,
 }
+
+/// How long a storage measurement stays fresh.
+const STORAGE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppStatus {
@@ -50,6 +62,7 @@ impl Tempest {
         Ok(Self {
             session: SessionManager::new(Arc::clone(&platform)),
             runtime: RuntimeManager::new(Arc::clone(&platform)),
+            storage_cache: std::sync::Mutex::new(None),
             platform,
         })
     }
@@ -81,8 +94,28 @@ impl Tempest {
                 .collect(),
             session: self.session.snapshot(),
             platform: self.platform.info(),
-            storage_bytes: self.platform.paths().disk_usage(),
+            storage_bytes: self.storage_bytes(),
         }
+    }
+
+    /// Bytes used by the Tempest tree, recomputed at most every
+    /// [`STORAGE_CACHE_TTL`].
+    pub fn storage_bytes(&self) -> u64 {
+        let mut cache = self.storage_cache.lock().expect("storage cache lock");
+        if let Some((measured_at, bytes)) = *cache {
+            if measured_at.elapsed() < STORAGE_CACHE_TTL {
+                return bytes;
+            }
+        }
+        let bytes = self.platform.paths().disk_usage();
+        *cache = Some((std::time::Instant::now(), bytes));
+        bytes
+    }
+
+    /// Drop the cached measurement, so the next `status()` reflects a change
+    /// that just happened.
+    fn invalidate_storage(&self) {
+        *self.storage_cache.lock().expect("storage cache lock") = None;
     }
 
     // --- authentication ----------------------------------------------------
@@ -137,7 +170,9 @@ impl Tempest {
     ) -> Result<()> {
         let id = ComponentId::parse(id)
             .ok_or_else(|| TempestError::other(format!("unknown component '{id}'")))?;
-        self.runtime.install(id, progress, cancel).await
+        let result = self.runtime.install(id, progress, cancel).await;
+        self.invalidate_storage();
+        result
     }
 
     /// Install every component this host needs, in dependency order.
@@ -174,6 +209,7 @@ impl Tempest {
                 continue;
             }
             self.runtime.install(*id, progress, cancel).await?;
+            self.invalidate_storage();
         }
         Ok(())
     }
@@ -181,11 +217,15 @@ impl Tempest {
     pub fn uninstall_component(&self, id: &str) -> Result<()> {
         let id = ComponentId::parse(id)
             .ok_or_else(|| TempestError::other(format!("unknown component '{id}'")))?;
-        self.runtime.uninstall(id)
+        self.runtime.uninstall(id)?;
+        self.invalidate_storage();
+        Ok(())
     }
 
     pub fn clear_cache(&self) -> Result<u64> {
-        self.runtime.clear_cache()
+        let freed = self.runtime.clear_cache()?;
+        self.invalidate_storage();
+        Ok(freed)
     }
 
     // --- launching ---------------------------------------------------------
@@ -294,6 +334,38 @@ mod tests {
             secrets: MemorySecretStore::default(),
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn storage_is_measured_once_and_then_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = app(dir.path());
+        // Something big enough that a stale answer would be obvious.
+        std::fs::write(
+            t.platform.paths().cache_dir().join("blob.bin"),
+            vec![0u8; 4096],
+        )
+        .unwrap();
+
+        let first = t.storage_bytes();
+        assert!(first >= 4096, "did not measure the tree: {first}");
+
+        // A file added after the measurement is not picked up until the cache
+        // expires — that is the point: status() is polled twice a second while
+        // a game runs and must not walk the tree every time.
+        std::fs::write(
+            t.platform.paths().cache_dir().join("more.bin"),
+            vec![0u8; 8192],
+        )
+        .unwrap();
+        assert_eq!(t.storage_bytes(), first, "the cache was not used");
+
+        // Anything that changes the tree on purpose invalidates it.
+        t.clear_cache().unwrap();
+        assert!(
+            t.storage_bytes() < first,
+            "the cache survived a deliberate change"
+        );
     }
 
     #[test]

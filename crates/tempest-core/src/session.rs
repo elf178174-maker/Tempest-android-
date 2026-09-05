@@ -94,6 +94,10 @@ struct Inner {
     /// Environment contributed by the front-end rather than by config — the
     /// desktop CLI's optional plugins are the only current source.
     extra_env: std::collections::BTreeMap<String, String>,
+    /// Captured at launch. The UI polls twice a second while a game runs, and
+    /// re-reading and re-parsing config.toml on every one of those polls is
+    /// pure waste on a device that is busy running a game.
+    filter_noise: bool,
 }
 
 /// Owns at most one running game session.
@@ -112,6 +116,7 @@ impl SessionManager {
                 receiver: None,
                 output: Vec::new(),
                 extra_env: std::collections::BTreeMap::new(),
+                filter_noise: true,
             })),
         }
     }
@@ -136,8 +141,6 @@ impl SessionManager {
 
     /// Poll the child, fold new output in, and move the state machine along.
     fn refresh(&self, inner: &mut Inner) {
-        let config = Config::load_or_default(self.platform.paths());
-
         if let Some(handle) = inner.receiver.as_mut() {
             if matches!(handle.poll(), Ok(status) if !status.is_running()) {
                 inner.receiver = None;
@@ -148,8 +151,9 @@ impl SessionManager {
             return;
         };
 
+        let filter_noise = inner.filter_noise;
         for line in handle.drain_output() {
-            if config.launcher.filter_wine_noise && guest::is_noise(&line) {
+            if filter_noise && guest::is_noise(&line) {
                 continue;
             }
             if inner.output.len() >= 400 {
@@ -235,6 +239,7 @@ impl SessionManager {
     fn launch_inner(&self, link: &VortexLink) -> Result<()> {
         let paths = self.platform.paths();
         let config = Config::load_or_default(paths);
+        self.inner.lock().expect("session lock").filter_noise = config.launcher.filter_wine_noise;
         let runtime = RuntimeManager::new(Arc::clone(&self.platform));
 
         let missing = runtime.missing_required();

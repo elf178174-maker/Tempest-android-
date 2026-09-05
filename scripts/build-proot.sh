@@ -296,20 +296,44 @@ fi
 # --------------------------------------------------------------------------
 echo "==> Verifying"
 fail=0
-for f in libproot.so libproot-loader.so libproot-loader32.so; do
-    path="${OUT_DIR}/${f}"
-    info="$(file -b "${path}" 2>/dev/null || echo unknown)"
+
+describe() { file -b "$1" 2>/dev/null || echo unknown; }
+
+# The tracer and the 64-bit loader must be aarch64 Android binaries.
+for f in libproot.so libproot-loader.so; do
+    info="$(describe "${OUT_DIR}/${f}")"
     case "${info}" in
-        *aarch64*|*ARM\ aarch64*) ;;
+        *aarch64*) ;;
         *)
-            echo "::error::${f} is not an aarch64 binary: ${info}"
+            echo "::error::${f} should be an aarch64 binary but is: ${info}"
             fail=1
             ;;
     esac
     echo "    ${f}: ${info}"
 done
 
-# A dynamic dependency on libtalloc would mean the static link silently did not
+# The 32-bit loader is *supposed* to be a 32-bit ARM binary: it exists to map
+# 32-bit guest ELFs. Requiring aarch64 here would be wrong. It is only ever
+# executed for a 32-bit guest, which the Hangover stack never produces, so if
+# the build fell back to copying the 64-bit loader that is fine too.
+info="$(describe "${OUT_DIR}/libproot-loader32.so")"
+case "${info}" in
+    *"ARM, EABI"*|*aarch64*) ;;
+    *)
+        echo "::error::libproot-loader32.so is neither 32-bit ARM nor aarch64: ${info}"
+        fail=1
+        ;;
+esac
+echo "    libproot-loader32.so: ${info}"
+
+# libproot.so must be a *dynamically linked* Android executable — it needs
+# Bionic's linker at /system/bin/linker64.
+if ! describe "${OUT_DIR}/libproot.so" | grep -q "dynamically linked"; then
+    echo "::error::libproot.so is not dynamically linked; it will not start on Android"
+    fail=1
+fi
+
+# A dynamic dependency on talloc would mean the static link silently did not
 # happen, and the app would fail at runtime with a missing-library error.
 if "${TOOLCHAIN}/bin/llvm-readelf" -d "${OUT_DIR}/libproot.so" 2>/dev/null | grep -qi talloc; then
     echo "::error::libproot.so has a dynamic dependency on talloc; it must be static"

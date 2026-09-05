@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.tempest.android.ui.ErrorCard
+import io.tempest.android.ui.Screen
 import io.tempest.android.ui.TempestViewModel
 import io.tempest.android.ui.UiState
 
@@ -150,7 +151,7 @@ fun LoginScreen(state: UiState, viewModel: TempestViewModel) {
         )
 
         TextButton(
-            onClick = { viewModel.navigate(io.tempest.android.ui.Screen.Diagnostics) },
+            onClick = { viewModel.navigate(Screen.Diagnostics) },
             modifier = Modifier.padding(top = 8.dp),
         ) {
             Text("Diagnostics")

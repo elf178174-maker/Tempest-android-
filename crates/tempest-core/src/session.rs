@@ -91,6 +91,9 @@ struct Inner {
     vortex: Option<Box<dyn ProcessHandle>>,
     receiver: Option<Box<dyn ProcessHandle>>,
     output: Vec<String>,
+    /// Environment contributed by the front-end rather than by config — the
+    /// desktop CLI's optional plugins are the only current source.
+    extra_env: std::collections::BTreeMap<String, String>,
 }
 
 /// Owns at most one running game session.
@@ -108,8 +111,17 @@ impl SessionManager {
                 vortex: None,
                 receiver: None,
                 output: Vec::new(),
+                extra_env: std::collections::BTreeMap::new(),
             })),
         }
+    }
+
+    /// Add environment variables to every process this manager launches.
+    ///
+    /// Applied *before* the user's own `[wine.env]`, so an explicit setting in
+    /// the config file always wins over one a plugin contributed.
+    pub fn set_extra_env(&self, env: std::collections::BTreeMap<String, String>) {
+        self.inner.lock().expect("session lock").extra_env = env;
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
@@ -244,7 +256,15 @@ impl SessionManager {
 
         self.set_status(SessionState::StartingVortex, "Starting Vortex…");
 
-        let env = guest::wine_env(&config, &guest_env, paths);
+        let mut env = guest::wine_env(&config, &guest_env, paths);
+        {
+            let extra = self.inner.lock().expect("session lock").extra_env.clone();
+            for (key, value) in extra {
+                // The config file is the user's explicit intent; a plugin's
+                // suggestion must not override it.
+                env.entry(key).or_insert(value);
+            }
+        }
         let uri = link.to_uri();
         crate::logging::info(
             "session",
@@ -526,6 +546,69 @@ fn now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_env_is_stored_for_the_next_launch() {
+        use crate::platform::secrets::MemorySecretStore;
+        use crate::platform::{
+            paths::TempestPaths, process::ProcessBackend, secrets::SecretStore,
+            unix_process::UnixProcessBackend, HostKind, Platform, PlatformInfo, UriRegistration,
+        };
+
+        struct P {
+            paths: TempestPaths,
+            process: UnixProcessBackend,
+            secrets: MemorySecretStore,
+        }
+        impl Platform for P {
+            fn paths(&self) -> &TempestPaths {
+                &self.paths
+            }
+            fn process(&self) -> &dyn ProcessBackend {
+                &self.process
+            }
+            fn secrets(&self) -> &dyn SecretStore {
+                &self.secrets
+            }
+            fn info(&self) -> PlatformInfo {
+                PlatformInfo {
+                    kind: HostKind::LinuxDesktop,
+                    os_description: "test".into(),
+                    cpu_arch: "x86_64".into(),
+                    device_model: None,
+                    needs_x86_translation: false,
+                }
+            }
+            fn uri_handler_status(&self) -> Result<UriRegistration> {
+                Ok(UriRegistration::Desktop)
+            }
+            fn register_uri_handler(&self) -> Result<UriRegistration> {
+                Ok(UriRegistration::Desktop)
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = TempestPaths::with_root(dir.path().join("data"), dir.path().join("lib"));
+        paths.ensure_all().unwrap();
+        let manager = SessionManager::new(Arc::new(P {
+            paths,
+            process: UnixProcessBackend::permissive(),
+            secrets: MemorySecretStore::default(),
+        }));
+
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("DXVK_STATE_CACHE".to_string(), "1".to_string());
+        manager.set_extra_env(env);
+        assert_eq!(
+            manager
+                .inner
+                .lock()
+                .unwrap()
+                .extra_env
+                .get("DXVK_STATE_CACHE"),
+            Some(&"1".to_string())
+        );
+    }
 
     #[test]
     fn host_paths_become_z_rooted_windows_paths() {

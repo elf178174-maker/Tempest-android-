@@ -38,6 +38,27 @@ the upstream repository above, at the tag pinned in `scripts/build-proot.sh`,
 plus that script itself, which is the complete set of instructions used to
 produce the binaries. No patches are applied.
 
+### talloc
+
+- **Upstream**: <https://www.samba.org/ftp/talloc/> (mirrored in
+  <https://github.com/samba-team/samba> under `lib/talloc`)
+- **Licence**: LGPL-3.0-or-later
+- **Packaged as**: statically linked into `libproot.so`; not a separate file.
+- **Built by**: `scripts/build-proot.sh`, which compiles `talloc.c` against a
+  small stand-in for Samba's libreplace (included verbatim in that script)
+  because talloc's waf build system does not cross-compile cleanly for Android.
+
+PRoot depends on talloc. Linking GPL-2.0-**or-later** PRoot with LGPL-3.0
+talloc makes the resulting binary effectively GPL-3.0, which is exactly what
+every distribution's `proot` package already is — PRoot's own COPYING permits
+"version 2 of the License, or (at your option) any later version", so the
+upgrade is allowed. Corresponding source for both is available at the upstreams
+above at the pinned versions.
+
+It is linked statically on purpose. Android extracts only files matching
+`lib*.so` into `nativeLibraryDir`, so a shared `libtalloc.so.2` could not be
+shipped under its own SONAME.
+
 > **Note on the copyleft boundary.** Because PRoot is GPL-2.0 and Tempest is
 > MIT/Apache-2.0, the two are kept strictly separate: no PRoot source is copied
 > into this repository, no PRoot header is included by any Rust or Kotlin file,

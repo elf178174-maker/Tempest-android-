@@ -438,17 +438,33 @@ impl RuntimeManager {
     fn prepare_rootfs(&self) -> Result<()> {
         let root = self.platform.paths().guest_rootfs();
 
+        // `/etc/resolv.conf` in the base image is often a dangling symlink to
+        // systemd-resolved's stub. Writing through it would either fail or land
+        // outside the tree, so replace the entry outright.
         let write = |rel: &str, contents: &str| -> Result<()> {
             let path = root.join(rel);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            if path.symlink_metadata().is_ok() {
+                std::fs::remove_file(&path).ok();
+            }
             std::fs::write(path, contents)?;
             Ok(())
         };
 
-        // Android does not expose /etc/resolv.conf to apps, so use public
-        // resolvers rather than leaving the guest with no DNS at all.
+        // Only fill these in if the image did not ship them: clobbering
+        // /etc/passwd would drop the system accounts dpkg and apt expect.
+        let write_if_absent = |rel: &str, contents: &str| -> Result<()> {
+            let path = root.join(rel);
+            if path.exists() {
+                return Ok(());
+            }
+            write(rel, contents)
+        };
+
+        // Android does not expose a usable /etc/resolv.conf to apps, so the
+        // guest gets public resolvers rather than no DNS at all.
         write(
             "etc/resolv.conf",
             "nameserver 1.1.1.1\nnameserver 8.8.8.8\n",
@@ -457,15 +473,15 @@ impl RuntimeManager {
             "etc/hosts",
             "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n",
         )?;
-        // dpkg and apt refuse to run some operations without these.
-        write(
+        write_if_absent(
             "etc/passwd",
             "root:x:0:0:root:/root:/bin/sh\ntempest:x:1000:1000:tempest:/home/tempest:/bin/sh\n",
         )?;
-        write("etc/group", "root:x:0:\ntempest:x:1000:\n")?;
+        write_if_absent("etc/group", "root:x:0:\ntempest:x:1000:\n")?;
         write("etc/hostname", "tempest\n")?;
-        // PRoot cannot provide the mount namespace apt sandboxing wants, and
-        // fsync on app storage is slow enough to matter on a phone.
+
+        // PRoot cannot provide the mount namespace apt's download sandbox
+        // wants, and fsync on app storage is slow enough on a phone to matter.
         write(
             "etc/apt/apt.conf.d/99tempest",
             "APT::Sandbox::User \"root\";\n\
@@ -937,6 +953,59 @@ mod tests {
         }
         let err = mgr.place_vortex(&zip_path).unwrap_err();
         assert!(err.to_string().contains("no Vortex.exe"), "{err}");
+    }
+
+    #[test]
+    fn rootfs_preparation_does_not_clobber_the_images_own_account_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let platform = fake(dir.path());
+        let root = platform.paths().guest_rootfs();
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        // Ubuntu Base ships these, complete with the system accounts apt and
+        // dpkg expect to find. Overwriting them breaks package installation.
+        std::fs::write(
+            root.join("etc/passwd"),
+            "root:x:0:0::/root:/bin/bash\n_apt:x:42:65534::/nonexistent:/usr/sbin/nologin\n",
+        )
+        .unwrap();
+
+        RuntimeManager::new(Arc::clone(&platform))
+            .prepare_rootfs()
+            .unwrap();
+
+        let passwd = std::fs::read_to_string(root.join("etc/passwd")).unwrap();
+        assert!(
+            passwd.contains("_apt"),
+            "the image's system accounts were destroyed"
+        );
+    }
+
+    #[test]
+    fn rootfs_preparation_replaces_a_dangling_resolv_conf_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let platform = fake(dir.path());
+        let root = platform.paths().guest_rootfs();
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        // What the base image actually ships: a symlink to a stub that does
+        // not exist inside the container.
+        std::os::unix::fs::symlink(
+            "../run/systemd/resolve/stub-resolv.conf",
+            root.join("etc/resolv.conf"),
+        )
+        .unwrap();
+
+        RuntimeManager::new(Arc::clone(&platform))
+            .prepare_rootfs()
+            .unwrap();
+
+        let resolv = root.join("etc/resolv.conf");
+        assert!(
+            resolv.symlink_metadata().unwrap().file_type().is_file(),
+            "resolv.conf is still a symlink; the guest would have no DNS"
+        );
+        assert!(std::fs::read_to_string(&resolv)
+            .unwrap()
+            .contains("nameserver"));
     }
 
     #[test]

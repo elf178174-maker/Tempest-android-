@@ -5,6 +5,8 @@
 //! `token`, `uninstall`. Everything below the argument parsing now goes through
 //! `tempest-core`, which is the same code the Android app runs.
 
+mod plugins;
+
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use std::sync::Arc;
@@ -54,6 +56,8 @@ enum Commands {
     },
     /// Sign out
     Logout,
+    /// List or install optional performance plugins (Linux only)
+    Plugin { args: Vec<String> },
 }
 
 fn platform() -> PlatformRef {
@@ -148,6 +152,7 @@ async fn run(app: &Tempest, command: Commands) -> tempest_core::Result<()> {
         }
 
         Commands::UriHandler { uri } => {
+            apply_plugin_env(app);
             let link = app.play_uri(&uri)?;
             println!("{} Launching game {}…", "[INFO]".cyan(), link.game_id);
             follow_session(app)
@@ -201,6 +206,8 @@ async fn run(app: &Tempest, command: Commands) -> tempest_core::Result<()> {
             Ok(())
         }
 
+        Commands::Plugin { args } => plugins::run(app.platform(), &args),
+
         Commands::Doctor => {
             print_report(app);
             Ok(())
@@ -226,6 +233,42 @@ async fn run(app: &Tempest, command: Commands) -> tempest_core::Result<()> {
             Ok(())
         }
     }
+}
+
+/// Feed the installed plugins' environment into the next launch.
+fn apply_plugin_env(app: &Tempest) {
+    let env = plugins::env_vars(app.platform());
+    if !env.is_empty() {
+        println!(
+            "{} plugins active: {}",
+            "[INFO]".cyan(),
+            plugins::installed_names(app.platform()).join(", ")
+        );
+        app.session().set_extra_env(env);
+    }
+}
+
+/// Start the `vortex-optim` helper alongside a running game, as upstream did.
+///
+/// The delay is upstream's: the helper adjusts a process that does not exist
+/// until Vortex has started the game. Failures are reported rather than
+/// swallowed, but never abort the session — the game is running either way.
+fn spawn_optimizer(app: &Tempest) -> Option<std::thread::JoinHandle<()>> {
+    let path = plugins::binary_path(app.platform(), "vortex-optim")?;
+    println!("{} vortex-optim will start shortly…", "[INFO]".cyan());
+    Some(std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+        match std::process::Command::new(&path).spawn() {
+            Ok(mut child) => {
+                if let Ok(status) = child.wait() {
+                    if !status.success() {
+                        eprintln!("{} vortex-optim exited: {status}", "[WARN]".yellow());
+                    }
+                }
+            }
+            Err(e) => eprintln!("{} could not start vortex-optim: {e}", "[WARN]".yellow()),
+        }
+    }))
 }
 
 async fn install_component(app: &Tempest, id: ComponentId) -> tempest_core::Result<()> {
@@ -290,6 +333,7 @@ fn progress_sink() -> tempest_core::runtime::ProgressSink {
 fn follow_session(app: &Tempest) -> tempest_core::Result<()> {
     use tempest_core::session::SessionState;
 
+    let optimizer = spawn_optimizer(app);
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let stop = Arc::clone(&stop);
@@ -308,15 +352,18 @@ fn follow_session(app: &Tempest) -> tempest_core::Result<()> {
         if stop.load(std::sync::atomic::Ordering::SeqCst) {
             println!("{} Stopping…", "[INFO]".cyan());
             app.stop()?;
+            drop(optimizer);
             return Ok(());
         }
 
         match snapshot.state {
             SessionState::Exited => {
                 println!("{} {}", "[DONE]".green(), snapshot.status_text);
+                drop(optimizer);
                 return Ok(());
             }
             SessionState::Failed => {
+                drop(optimizer);
                 return Err(TempestError::other(
                     snapshot.error.unwrap_or(snapshot.status_text),
                 ));

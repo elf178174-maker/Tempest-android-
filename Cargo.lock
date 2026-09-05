@@ -1742,6 +1742,7 @@ dependencies = [
  "libc",
  "serde_json",
  "tempest-core",
+ "tempfile",
  "tokio",
  "tracing-subscriber",
 ]

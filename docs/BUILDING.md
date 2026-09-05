@@ -38,12 +38,36 @@ ten-minute APK build.
 4. **Builds the Rust core** as `libtempest_jni.so` into
    `android/app/src/main/jniLibs/arm64-v8a/`.
 5. **Builds PRoot from source** into the same directory, as `libproot.so`,
-   `libproot-loader.so` and `libproot-loader32.so`.
+   `libproot-loader.so` and `libproot-loader32.so`. This also builds talloc,
+   PRoot's one dependency, statically — see below.
 6. Gradle 8.11.1: `testDebugUnitTest`, `lintDebug`, `assembleDebug`.
 7. **Verifies the APK actually contains all four native libraries.** A build
    that silently drops them produces an APK that installs and then fails on
    first launch, so this is checked rather than assumed.
 8. Uploads `tempest-android-debug`.
+
+### Why PRoot is built rather than downloaded
+
+Nobody publishes a PRoot binary for Android that this project could pin and
+verify, and PRoot is the one component that *must* be inside the APK — it is
+the only thing Android will let the app execute. So it is built from a pinned
+upstream tag, in the open, by `scripts/build-proot.sh`.
+
+Two details in that script matter:
+
+- **`PROOT_UNBUNDLE_LOADER`.** By default PRoot embeds its ELF loader in its own
+  binary and extracts it to a temporary file at runtime. On Android that file
+  would land in app data and be unexecutable. Setting this makes PRoot read
+  `PROOT_LOADER` and `PROOT_LOADER_32` from the environment instead, so the
+  loader can live in `nativeLibraryDir` where it can actually be run.
+- **Static talloc.** PRoot links against Samba's talloc, whose waf build does
+  not cross-compile cleanly for Android. `talloc.c` is compiled directly against
+  a small stand-in for libreplace and linked statically, because Android only
+  extracts files matching `lib*.so` and a shared `libtalloc.so.2` could not be
+  shipped under its own SONAME.
+
+The script verifies its own output: every binary must be aarch64, and
+`libproot.so` must have no dynamic dependency on talloc.
 
 ### Two kinds of native library
 
@@ -158,7 +182,8 @@ Bump these deliberately, not by drift:
 | AGP | 8.7.3 | `android/gradle/libs.versions.toml` |
 | Kotlin | 2.0.21 | `android/gradle/libs.versions.toml` |
 | JDK | 17 | `.github/workflows/android.yml` |
-| PRoot | pinned tag | `scripts/build-proot.sh` |
+| PRoot | v5.1.107.92 | `scripts/build-proot.sh` |
+| talloc | 2.4.3 | `scripts/build-proot.sh` |
 
 Runtime components have their own pinned versions and SHA-256 digests in
 `crates/tempest-core/src/runtime/manifest.rs`.

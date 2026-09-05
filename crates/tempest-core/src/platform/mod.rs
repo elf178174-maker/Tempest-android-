@@ -22,7 +22,11 @@ pub mod unix_process;
 #[cfg(all(unix, not(target_os = "android")))]
 pub mod linux;
 
-#[cfg(target_os = "android")]
+// Compiled on every Unix target, not just Android. The module holds no
+// Android-only API calls — the device facts and paths are injected by the
+// caller — so building it everywhere lets the desktop CI runner exercise the
+// Android path handling, exec policy and secret plumbing under `cargo test`.
+#[cfg(unix)]
 pub mod android;
 
 pub use paths::TempestPaths;

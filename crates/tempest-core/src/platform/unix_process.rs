@@ -169,7 +169,22 @@ impl UnixProcessBackend {
 }
 
 impl ProcessBackend for UnixProcessBackend {
-    fn spawn(&self, spec: ProcessSpec) -> Result<Box<dyn ProcessHandle>> {
+    fn spawn(&self, mut spec: ProcessSpec) -> Result<Box<dyn ProcessHandle>> {
+        // A bare name like "wine" is resolved against the spec's own PATH, not
+        // the host's. Inside the guest container this never happens (the guest
+        // resolves its own commands), but on the desktop the caller may
+        // legitimately say "wine" and mean "whatever is on PATH".
+        if spec.program.components().count() == 1 {
+            match resolve_on_path(&spec.program, spec.env.get("PATH").map(String::as_str)) {
+                Some(found) => spec.program = found,
+                None => {
+                    return Err(TempestError::missing(
+                        spec.program.display().to_string(),
+                        "not found on PATH",
+                    ))
+                }
+            }
+        }
         if !spec.program.exists() {
             return Err(TempestError::missing(
                 spec.program.display().to_string(),
@@ -272,6 +287,23 @@ impl ProcessBackend for UnixProcessBackend {
     }
 }
 
+/// Find an executable by name on a PATH, without shelling out to `which`.
+fn resolve_on_path(program: &Path, path_var: Option<&str>) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = path_var
+        .map(String::from)
+        .or_else(|| std::env::var("PATH").ok())?;
+    path.split(':')
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| Path::new(dir).join(program))
+        .find(|candidate| {
+            candidate
+                .metadata()
+                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        })
+}
+
 enum StreamKind {
     Out(std::process::ChildStdout),
     Err(std::process::ChildStderr),
@@ -330,6 +362,36 @@ mod tests {
         h.terminate().unwrap();
         let status = h.poll().unwrap();
         assert!(!status.is_running(), "still running after terminate");
+    }
+
+    #[test]
+    fn a_bare_command_name_is_resolved_against_the_spec_path() {
+        let backend = UnixProcessBackend::permissive();
+        let mut h = backend
+            .spawn(
+                ProcessSpec::new("echoer", "sh")
+                    .arg("-c")
+                    .arg("echo resolved")
+                    .env("PATH", "/usr/bin:/bin"),
+            )
+            .unwrap();
+        assert_eq!(h.wait().unwrap(), ProcessStatus::Exited(0));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(h.drain_output().iter().any(|l| l == "resolved"));
+    }
+
+    #[test]
+    fn a_bare_name_that_is_not_on_path_reports_that_specifically() {
+        let backend = UnixProcessBackend::permissive();
+        match backend.spawn(
+            ProcessSpec::new("nope", "definitely-not-a-real-command").env("PATH", "/usr/bin:/bin"),
+        ) {
+            Ok(_) => panic!("resolved a command that does not exist"),
+            Err(e) => {
+                assert_eq!(e.kind(), "missing");
+                assert!(e.to_string().contains("PATH"), "{e}");
+            }
+        }
     }
 
     #[test]

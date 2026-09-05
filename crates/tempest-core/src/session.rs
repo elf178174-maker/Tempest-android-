@@ -20,10 +20,15 @@ use crate::{Result, TempestError};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
-/// Windows path of the Vortex client inside the prefix. The `/vortex` bind is
-/// mapped to drive `Z:` by Wine's default drive mapping of `/`.
-const VORTEX_WINDOWS_PATH: &str = "Z:\\vortex\\Vortex.exe";
-const RECEIVER_WINDOWS_PATH: &str = "Z:\\vortex\\receiver.exe";
+/// Windows path of the Vortex client as the guest sees it. Wine maps the Unix
+/// root to drive `Z:`, and `/vortex` is where the client directory is bound.
+const GUEST_VORTEX_EXE: &str = "Z:\\vortex\\Vortex.exe";
+const GUEST_RECEIVER_EXE: &str = "Z:\\vortex\\receiver.exe";
+
+/// Turn a host path into the `Z:`-rooted Windows path Wine will accept.
+fn windows_path(host: &std::path::Path) -> String {
+    format!("Z:{}", host.display().to_string().replace('/', "\\"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -239,7 +244,7 @@ impl SessionManager {
 
         self.set_status(SessionState::StartingVortex, "Starting Vortex…");
 
-        let env = guest::wine_env(&config, &guest_env);
+        let env = guest::wine_env(&config, &guest_env, paths);
         let uri = link.to_uri();
         crate::logging::info(
             "session",
@@ -249,11 +254,19 @@ impl SessionManager {
         // receiver.exe first, so in-game notifications work once Vortex is up.
         self.start_receiver(&guest_env, &config, &env);
 
+        // On the desktop there is no container, so the client is at its real
+        // host path; inside the container it is at the bind-mount target.
+        let vortex_exe = if guest_env.is_containerised() {
+            GUEST_VORTEX_EXE.to_string()
+        } else {
+            windows_path(&paths.vortex_exe())
+        };
+
         let spec = guest_env.command(
             paths,
             "vortex",
             &config.wine.binary,
-            &[VORTEX_WINDOWS_PATH.to_string(), uri],
+            &[vortex_exe, uri],
             env,
         )?;
         let handle = self.platform.process().spawn(spec)?;
@@ -292,11 +305,17 @@ impl SessionManager {
 
         let mut receiver_env = env.clone();
         receiver_env.insert("WINEDEBUG".into(), "-all".into());
+        let receiver_exe = if guest_env.is_containerised() {
+            GUEST_RECEIVER_EXE.to_string()
+        } else {
+            windows_path(&paths.receiver_exe())
+        };
+
         let spec = match guest_env.command(
             paths,
             "receiver",
             &config.wine.binary,
-            &[RECEIVER_WINDOWS_PATH.to_string()],
+            &[receiver_exe],
             receiver_env,
         ) {
             Ok(s) => s.no_capture(),
@@ -329,11 +348,11 @@ impl SessionManager {
                 "Creating the Windows environment…",
             );
             crate::logging::info("session", "running wineboot to create the prefix");
+            let prefix = guest::GuestEnv::new(&self.platform).guest_prefix(paths);
             runtime.run_in_guest(
                 "wineboot",
-                "set -e; WINEPREFIX=/home/tempest/.wine WINEDEBUG=-all wineboot --init; \
-                 WINEPREFIX=/home/tempest/.wine wineserver -w",
-                &[],
+                "set -e; export WINEPREFIX=\"$1\"; WINEDEBUG=-all wineboot --init; wineserver -w",
+                &[prefix],
                 900,
             )?;
         }
@@ -403,11 +422,12 @@ impl SessionManager {
         // process costs real time on an emulated stack.
         let reg_path = paths.wine_prefix().join("tempest-overrides.reg");
         std::fs::write(&reg_path, dll::overrides_reg(&overrides))?;
+
+        let prefix = guest::GuestEnv::new(&self.platform).guest_prefix(paths);
         runtime.run_in_guest(
             "regedit",
-            "set -e; WINEPREFIX=/home/tempest/.wine WINEDEBUG=-all \
-             wine regedit /home/tempest/.wine/tempest-overrides.reg",
-            &[],
+            "set -e; export WINEPREFIX=\"$1\"; WINEDEBUG=-all wine regedit \"$1/tempest-overrides.reg\"",
+            &[prefix],
             300,
         )?;
         Ok(())
@@ -506,6 +526,17 @@ fn now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_paths_become_z_rooted_windows_paths() {
+        assert_eq!(
+            windows_path(std::path::Path::new(
+                "/home/u/.local/share/tempest/vortex/Vortex.exe"
+            )),
+            "Z:\\home\\u\\.local\\share\\tempest\\vortex\\Vortex.exe"
+        );
+        assert!(!windows_path(std::path::Path::new("/a/b")).contains('/'));
+    }
 
     #[test]
     fn state_activity() {

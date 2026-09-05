@@ -62,6 +62,19 @@ impl GuestEnv {
         self.containerised
     }
 
+    /// The Wine prefix **as the guest sees it**.
+    ///
+    /// Inside the container it is the bind-mount target; on the desktop there
+    /// is no container, so it is the host path. Scripts that need the prefix
+    /// take it as a positional argument rather than hard-coding either form.
+    pub fn guest_prefix(&self, paths: &TempestPaths) -> String {
+        if self.containerised {
+            "/home/tempest/.wine".to_string()
+        } else {
+            paths.wine_prefix().display().to_string()
+        }
+    }
+
     /// Check that everything needed to enter the guest is present, with an
     /// error that says exactly which piece is missing and what to do about it.
     pub fn preflight(&self) -> Result<()> {
@@ -230,10 +243,14 @@ pub fn base_env() -> BTreeMap<String, String> {
 }
 
 /// Environment for a Wine invocation, assembled from config.
-pub fn wine_env(config: &Config, guest: &GuestEnv) -> BTreeMap<String, String> {
+pub fn wine_env(
+    config: &Config,
+    guest: &GuestEnv,
+    paths: &TempestPaths,
+) -> BTreeMap<String, String> {
     let mut env = base_env();
 
-    env.insert("WINEPREFIX".into(), "/home/tempest/.wine".into());
+    env.insert("WINEPREFIX".into(), guest.guest_prefix(paths));
     // Wine's own noise is filtered for display, but keeping err+fixme in the
     // stream is what makes the log useful when something breaks.
     env.insert("WINEDEBUG".into(), "err+all,fixme-all".into());
@@ -445,7 +462,7 @@ mod tests {
         let guest = ready_guest(dir.path());
         let p = paths(dir.path());
         let mut env = base_env();
-        env.insert("WINEPREFIX".into(), "/home/tempest/.wine".into());
+        env.insert("WINEPREFIX".into(), guest.guest_prefix(&p));
         let spec = guest.command(&p, "t", "/bin/true", &[], env).unwrap();
 
         let i = spec.args.iter().position(|a| a == "/usr/bin/env").unwrap();
@@ -493,7 +510,7 @@ mod tests {
         cfg.graphics.dxvk_hud = Some("fps".into());
         cfg.launcher.use_fsync = true;
 
-        let env = wine_env(&cfg, &guest);
+        let env = wine_env(&cfg, &guest, &paths(dir.path()));
         assert_eq!(
             env.get("WINEPREFIX").map(String::as_str),
             Some("/home/tempest/.wine")
@@ -511,8 +528,36 @@ mod tests {
         let mut cfg = Config::default();
         cfg.wine.env.insert("WINEDEBUG".into(), "-all".into());
         assert_eq!(
-            wine_env(&cfg, &guest).get("WINEDEBUG").map(String::as_str),
+            wine_env(&cfg, &guest, &paths(dir.path()))
+                .get("WINEDEBUG")
+                .map(String::as_str),
             Some("-all")
+        );
+    }
+
+    #[test]
+    fn the_prefix_path_differs_between_the_container_and_the_desktop() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+
+        // In the container the prefix is the bind-mount target...
+        assert_eq!(
+            ready_guest(dir.path()).guest_prefix(&p),
+            "/home/tempest/.wine"
+        );
+
+        // ...and on the desktop it is the real host path, because there is no
+        // container to map it into.
+        let desktop = GuestEnv {
+            rootfs: PathBuf::new(),
+            proot: PathBuf::new(),
+            loader: PathBuf::new(),
+            loader32: PathBuf::new(),
+            containerised: false,
+        };
+        assert_eq!(
+            desktop.guest_prefix(&p),
+            p.wine_prefix().display().to_string()
         );
     }
 

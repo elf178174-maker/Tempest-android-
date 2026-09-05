@@ -188,8 +188,11 @@ read_version() {
 }
 TV_MAJOR="$(read_version MAJOR)"
 TV_MINOR="$(read_version MINOR)"
+# Only MAJOR and MINOR appear in talloc.h; waf supplies the release digit. It
+# feeds nothing but talloc's internal magic value, which only has to be
+# consistent within one build, so defaulting it to 0 is safe.
 TV_RELEASE="$(read_version RELEASE)"
-echo "    talloc ${TV_MAJOR}.${TV_MINOR}.${TV_RELEASE}"
+echo "    talloc ${TALLOC_VERSION} (header reports ${TV_MAJOR}.${TV_MINOR})"
 
 echo "==> Building talloc for ${ARCH}-linux-android${API}"
 "${CC}" -c -O2 -fPIC -I"${TALLOC_DIR}" \
@@ -210,12 +213,37 @@ if ! git clone --quiet --depth 1 --branch "${PROOT_REF}" "${PROOT_REPO}" "${WORK
 fi
 PROOT_REVISION="$(git -C "${WORK}/proot" rev-parse HEAD)"
 
+# --------------------------------------------------------------------------
+# One upstream fix
+# --------------------------------------------------------------------------
+#
+# extension/ashmem_memfd/ashmem_memfd.c is compiled only under __ANDROID__, and
+# it calls strcmp() and memset() without including <string.h>. Nobody noticed
+# because until clang 16 an implicit declaration was a warning; the NDK's clang
+# makes it an error, so the file no longer builds at all.
+#
+# The fix is applied here rather than with a compiler flag on purpose. A global
+# `-include string.h` breaks two other things in this tree: the assembly source
+# cannot be preprocessed with a C header, and loader/loader.c deliberately
+# avoids libc headers and defines its own static basename(). And
+# `-Wno-implicit-function-declaration` would hide the same class of bug
+# everywhere else, which is worse than fixing the one real instance.
+ASHMEM="${WORK}/proot/src/extension/ashmem_memfd/ashmem_memfd.c"
+if [ -f "${ASHMEM}" ] && ! grep -q '#include <string.h>' "${ASHMEM}"; then
+    echo "==> Adding the missing <string.h> include to ashmem_memfd.c"
+    sed -i 's|#include <stdlib.h>|#include <stdlib.h>\n#include <string.h> /* strcmp, memset — missing upstream */|' "${ASHMEM}"
+    grep -q '#include <string.h>' "${ASHMEM}" || {
+        echo "error: could not apply the ashmem_memfd fix" >&2
+        exit 1
+    }
+fi
+
 echo "==> Building PRoot"
 # These are exported rather than passed on the command line: the makefile uses
 # `+=` on both, and a command-line assignment would replace its own -I and
 # -ltalloc rather than adding to them.
 export CPPFLAGS="-I${TALLOC_DIR}"
-export CFLAGS="-O2 -fPIC -Wno-error"
+export CFLAGS="-O2 -fPIC"
 export LDFLAGS="-L${TALLOC_DIR} -pie"
 
 # PROOT_UNBUNDLE_LOADER is the whole point: it makes PRoot honour PROOT_LOADER

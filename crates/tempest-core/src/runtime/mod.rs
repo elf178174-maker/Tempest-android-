@@ -117,16 +117,23 @@ impl RuntimeManager {
         }
     }
 
+    /// Which host's rules apply. Kept in one place so every caller filters the
+    /// catalogue the same way.
+    fn host(&self) -> crate::platform::HostKind {
+        self.platform.info().kind
+    }
+
     pub fn status(&self) -> Vec<ComponentStatus> {
         let state = RuntimeState::load(&self.platform);
-        manifest::catalogue()
+        let host = self.host();
+        manifest::catalogue_for(host)
             .into_iter()
             .map(|spec| {
                 let recorded = state.get(spec.id);
                 ComponentStatus {
                     id: spec.id.as_str().to_string(),
                     display_name: spec.display_name.to_string(),
-                    required: spec.necessity == Necessity::Required,
+                    required: spec.necessity(host) == Necessity::Required,
                     installed: self.is_installed(&spec),
                     installed_version: recorded.map(|r| r.version.clone()),
                     available_version: spec.version.to_string(),
@@ -140,11 +147,12 @@ impl RuntimeManager {
             .collect()
     }
 
-    /// Required components that are not yet present.
+    /// Required components that are not yet present on *this* host.
     pub fn missing_required(&self) -> Vec<ComponentId> {
-        manifest::catalogue()
+        let host = self.host();
+        manifest::catalogue_for(host)
             .into_iter()
-            .filter(|s| s.necessity == Necessity::Required && !self.is_installed(s))
+            .filter(|s| s.necessity(host) == Necessity::Required && !self.is_installed(s))
             .map(|s| s.id)
             .collect()
     }
@@ -191,6 +199,19 @@ impl RuntimeManager {
         cancel: &CancelToken,
     ) -> Result<()> {
         let spec = manifest::spec(id);
+        let host = self.host();
+        if !spec.applies_to(host) {
+            return Err(TempestError::other(format!(
+                "{} is not used on {}: {}",
+                spec.display_name,
+                host.as_str(),
+                match host {
+                    crate::platform::HostKind::LinuxDesktop =>
+                        "your distribution already provides it",
+                    crate::platform::HostKind::Android => "it has no Android build",
+                }
+            )));
+        }
         let emit = |phase: InstallPhase| {
             if let Some(p) = progress {
                 p(id, phase);
@@ -792,6 +813,7 @@ mod tests {
         paths: TempestPaths,
         process: UnixProcessBackend,
         secrets: MemorySecretStore,
+        kind: HostKind,
     }
 
     impl Platform for FakePlatform {
@@ -805,12 +827,21 @@ mod tests {
             &self.secrets
         }
         fn info(&self) -> PlatformInfo {
-            PlatformInfo {
-                kind: HostKind::LinuxDesktop,
-                os_description: "test".into(),
-                cpu_arch: "x86_64".into(),
-                device_model: None,
-                needs_x86_translation: false,
+            match self.kind {
+                HostKind::Android => PlatformInfo {
+                    kind: HostKind::Android,
+                    os_description: "Android 15 (API 35)".into(),
+                    cpu_arch: "arm64-v8a".into(),
+                    device_model: Some("Test Device".into()),
+                    needs_x86_translation: true,
+                },
+                HostKind::LinuxDesktop => PlatformInfo {
+                    kind: HostKind::LinuxDesktop,
+                    os_description: "test".into(),
+                    cpu_arch: "x86_64".into(),
+                    device_model: None,
+                    needs_x86_translation: false,
+                },
             }
         }
         fn uri_handler_status(&self) -> Result<UriRegistration> {
@@ -821,36 +852,76 @@ mod tests {
         }
     }
 
-    fn fake(dir: &std::path::Path) -> PlatformRef {
+    fn fake_host(dir: &std::path::Path, kind: HostKind) -> PlatformRef {
         let paths = TempestPaths::with_root(dir.join("data"), dir.join("lib"));
         paths.ensure_all().unwrap();
         Arc::new(FakePlatform {
             paths,
             process: UnixProcessBackend::permissive(),
             secrets: MemorySecretStore::default(),
+            kind,
         })
     }
 
-    #[test]
-    fn nothing_is_installed_on_a_fresh_profile() {
-        let dir = tempfile::tempdir().unwrap();
-        let mgr = RuntimeManager::new(fake(dir.path()));
-        assert!(!mgr.is_ready());
-        let missing = mgr.missing_required();
-        assert!(missing.contains(&ComponentId::Rootfs));
-        assert!(missing.contains(&ComponentId::Hangover));
-        assert!(missing.contains(&ComponentId::Vortex));
+    fn fake(dir: &std::path::Path) -> PlatformRef {
+        fake_host(dir, HostKind::LinuxDesktop)
     }
 
     #[test]
-    fn status_reports_every_component_with_provenance() {
+    fn a_fresh_android_profile_is_missing_the_whole_stack() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = RuntimeManager::new(fake_host(dir.path(), HostKind::Android));
+        assert!(!mgr.is_ready());
+        let missing = mgr.missing_required();
+        assert!(missing.contains(&ComponentId::Rootfs), "{missing:?}");
+        assert!(missing.contains(&ComponentId::Hangover), "{missing:?}");
+        assert!(missing.contains(&ComponentId::Vortex), "{missing:?}");
+    }
+
+    #[test]
+    fn a_desktop_is_never_asked_to_download_the_android_stack() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = RuntimeManager::new(fake(dir.path()));
-        let status = mgr.status();
-        assert_eq!(status.len(), ComponentId::all().len());
-        for s in &status {
-            assert!(!s.license.is_empty());
-            assert!(s.upstream.starts_with("https://"));
+        let missing = mgr.missing_required();
+
+        // A desktop already has glibc and gets Wine from its distribution;
+        // fetching an ARM64 Ubuntu image onto it would be nonsense.
+        assert!(!missing.contains(&ComponentId::Rootfs), "{missing:?}");
+        assert!(!missing.contains(&ComponentId::Hangover), "{missing:?}");
+        assert!(!missing.contains(&ComponentId::Mesa), "{missing:?}");
+        assert!(missing.contains(&ComponentId::Vortex), "{missing:?}");
+    }
+
+    #[tokio::test]
+    async fn installing_an_inapplicable_component_explains_why_rather_than_downloading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = RuntimeManager::new(fake(dir.path()));
+        let err = mgr
+            .install(ComponentId::Rootfs, None, &CancelToken::new())
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not used on linux"), "{msg}");
+        assert!(msg.contains("distribution"), "{msg}");
+    }
+
+    #[test]
+    fn status_reports_each_applicable_component_with_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let android = RuntimeManager::new(fake_host(dir.path(), HostKind::Android)).status();
+        assert_eq!(android.len(), ComponentId::all().len());
+
+        let linux = RuntimeManager::new(fake(dir.path())).status();
+        assert!(
+            linux.len() < android.len(),
+            "desktop list should be shorter"
+        );
+        assert!(linux.iter().all(|s| s.id != "rootfs"));
+
+        for s in android.iter().chain(linux.iter()) {
+            assert!(!s.license.is_empty(), "{} has no licence", s.id);
+            assert!(s.upstream.starts_with("https://"), "{} upstream", s.id);
             assert!(!s.installed);
         }
     }

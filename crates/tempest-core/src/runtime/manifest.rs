@@ -110,6 +110,8 @@ pub enum Necessity {
     Required,
     /// Improves things or covers specific titles.
     Optional,
+    /// Does not apply to this host at all.
+    NotApplicable,
 }
 
 #[derive(Debug, Clone)]
@@ -122,7 +124,12 @@ pub struct ComponentSpec {
     pub format: super::archive::Format,
     /// Path components stripped during extraction.
     pub strip_components: usize,
-    pub necessity: Necessity,
+    /// How badly this is needed, per host. A desktop already has Wine and a
+    /// glibc userland from its distribution, so most of the Android stack is
+    /// simply not applicable there — and downloading an ARM64 Ubuntu image onto
+    /// an x86-64 desktop would be actively wrong.
+    pub necessity_android: Necessity,
+    pub necessity_linux: Necessity,
     /// Approximate download size, so the UI can warn before a 300 MB pull on
     /// mobile data.
     pub approx_bytes: u64,
@@ -157,7 +164,9 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             archive_name: "ubuntu-base-24.04.3-base-arm64.tar.gz",
             format: Format::TarGz,
             strip_components: 0,
-            necessity: Necessity::Required,
+            // A desktop already is a glibc Linux system.
+            necessity_android: Necessity::Required,
+            necessity_linux: Necessity::NotApplicable,
             approx_bytes: 30 * 1024 * 1024,
             license: "Various (see /usr/share/doc inside the image); Ubuntu is redistributable",
             upstream: "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/",
@@ -177,7 +186,10 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             archive_name: "hangover-11.16-noble-arm64.tar",
             format: Format::Tar,
             strip_components: 0,
-            necessity: Necessity::Required,
+            // On a desktop, Wine comes from the distribution's package
+            // manager; these builds are ARM64 and would not even run.
+            necessity_android: Necessity::Required,
+            necessity_linux: Necessity::NotApplicable,
             approx_bytes: 293 * 1024 * 1024,
             license: "Wine: LGPL-2.1-or-later; FEX: MIT; Box64: MIT; DXVK: Zlib",
             upstream: "https://github.com/AndreRH/hangover",
@@ -197,7 +209,9 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             archive_name: "",
             format: Format::Deb,
             strip_components: 0,
-            necessity: Necessity::Optional,
+            // Desktops get Mesa and the Vulkan loader from their distribution.
+            necessity_android: Necessity::Optional,
+            necessity_linux: Necessity::NotApplicable,
             approx_bytes: 120 * 1024 * 1024,
             license: "MIT (Mesa); Apache-2.0 (Vulkan-Loader)",
             upstream: "https://gitlab.freedesktop.org/mesa/mesa",
@@ -218,7 +232,10 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             archive_name: "dxvk.tar.gz",
             format: Format::TarGz,
             strip_components: 1,
-            necessity: Necessity::Optional,
+            // Hangover already bundles a DXVK built for ARM64, so a separate
+            // one is an override on Android but the only source on a desktop.
+            necessity_android: Necessity::Optional,
+            necessity_linux: Necessity::Required,
             approx_bytes: 20 * 1024 * 1024,
             license: "Zlib",
             upstream: "https://github.com/doitsujin/dxvk",
@@ -238,7 +255,8 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             archive_name: "vkd3d-proton.tar.zst",
             format: Format::TarZst,
             strip_components: 1,
-            necessity: Necessity::Optional,
+            necessity_android: Necessity::Optional,
+            necessity_linux: Necessity::Optional,
             approx_bytes: 12 * 1024 * 1024,
             license: "LGPL-2.1-or-later",
             upstream: "https://github.com/HansKristian-Work/vkd3d-proton",
@@ -256,7 +274,8 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             archive_name: "vortex-windows.zip",
             format: super::archive::Format::Zip,
             strip_components: 0,
-            necessity: Necessity::Required,
+            necessity_android: Necessity::Required,
+            necessity_linux: Necessity::Required,
             approx_bytes: 80 * 1024 * 1024,
             license: "Proprietary — downloaded from Vortex, never redistributed by Tempest",
             upstream: "https://playvortex.io/",
@@ -264,6 +283,27 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             sentinel: "",
         },
     ]
+}
+
+impl ComponentSpec {
+    pub fn necessity(&self, host: crate::platform::HostKind) -> Necessity {
+        match host {
+            crate::platform::HostKind::Android => self.necessity_android,
+            crate::platform::HostKind::LinuxDesktop => self.necessity_linux,
+        }
+    }
+
+    pub fn applies_to(&self, host: crate::platform::HostKind) -> bool {
+        self.necessity(host) != Necessity::NotApplicable
+    }
+}
+
+/// The components relevant to a given host, in installation order.
+pub fn catalogue_for(host: crate::platform::HostKind) -> Vec<ComponentSpec> {
+    catalogue()
+        .into_iter()
+        .filter(|c| c.applies_to(host))
+        .collect()
 }
 
 pub fn spec(id: ComponentId) -> ComponentSpec {
@@ -345,7 +385,7 @@ mod tests {
     #[test]
     fn required_components_that_are_pinned_carry_a_digest() {
         for c in catalogue() {
-            if c.necessity != Necessity::Required {
+            if c.necessity_android != Necessity::Required {
                 continue;
             }
             if let Source::Pinned { sha256, url } = c.source {
@@ -365,6 +405,61 @@ mod tests {
     }
 
     #[test]
+    fn the_catalogue_is_filtered_per_host() {
+        use crate::platform::HostKind;
+
+        let android = catalogue_for(HostKind::Android);
+        let linux = catalogue_for(HostKind::LinuxDesktop);
+
+        // Everything applies on Android; the desktop stack is much smaller.
+        assert_eq!(android.len(), ComponentId::all().len());
+        assert!(
+            linux.len() < android.len(),
+            "desktop should not need the whole stack"
+        );
+
+        // Downloading an ARM64 Ubuntu image onto an x86-64 desktop would be
+        // nonsense, and Wine there comes from the distribution.
+        for id in [
+            ComponentId::Rootfs,
+            ComponentId::Hangover,
+            ComponentId::Mesa,
+        ] {
+            assert!(
+                !spec(id).applies_to(HostKind::LinuxDesktop),
+                "{} must not be offered on a desktop",
+                id.as_str()
+            );
+            assert!(spec(id).applies_to(HostKind::Android));
+        }
+
+        // The Vortex client is needed everywhere.
+        assert_eq!(
+            spec(ComponentId::Vortex).necessity(HostKind::Android),
+            Necessity::Required
+        );
+        assert_eq!(
+            spec(ComponentId::Vortex).necessity(HostKind::LinuxDesktop),
+            Necessity::Required
+        );
+    }
+
+    #[test]
+    fn dxvk_is_required_on_a_desktop_but_only_an_override_on_android() {
+        use crate::platform::HostKind;
+        // Hangover ships a DXVK built for ARM64, so a separate one is an
+        // override there; a desktop has no other source.
+        assert_eq!(
+            spec(ComponentId::Dxvk).necessity(HostKind::Android),
+            Necessity::Optional
+        );
+        assert_eq!(
+            spec(ComponentId::Dxvk).necessity(HostKind::LinuxDesktop),
+            Necessity::Required
+        );
+    }
+
+    #[test]
     fn the_two_large_required_downloads_are_flagged_as_large() {
         // The UI warns before pulling these on mobile data; if a bump makes one
         // small this test is a prompt to re-check the estimate.
@@ -377,7 +472,7 @@ mod tests {
     #[test]
     fn required_components_declare_a_sentinel_or_are_handled_specially() {
         for c in catalogue() {
-            if c.necessity == Necessity::Required && c.id != ComponentId::Vortex {
+            if c.necessity_android == Necessity::Required && c.id != ComponentId::Vortex {
                 assert!(
                     !c.sentinel.is_empty(),
                     "{} needs a sentinel path to verify its install",

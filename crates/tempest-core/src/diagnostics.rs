@@ -153,9 +153,9 @@ pub fn run(platform: &PlatformRef) -> Report {
     }
 
     // --- Runtime components ------------------------------------------------
-    for spec in manifest::catalogue() {
+    for spec in manifest::catalogue_for(info.kind) {
         let installed = runtime.is_installed(&spec);
-        let required = spec.necessity == manifest::Necessity::Required;
+        let required = spec.necessity(info.kind) == manifest::Necessity::Required;
         let check = match (installed, required) {
             (true, _) => Check::pass(spec.display_name, "installed"),
             (false, true) => Check::fail(

@@ -14,12 +14,14 @@ import io.tempest.android.core.StorageVolumeOption
 import io.tempest.android.core.TempestBridge
 import io.tempest.android.core.TempestConfig
 import io.tempest.android.core.TempestException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
 
@@ -47,12 +49,19 @@ class TempestRepository(context: Context) {
     /** Non-null when the core could not start; the UI shows this instead of a blank screen. */
     val initError: StateFlow<String?> = _initError
 
-    fun initialise(): Boolean {
+    /**
+     * Start the Rust core.
+     *
+     * Suspending and on the IO dispatcher because initialisation loads a native
+     * library, creates the whole directory tree and opens the log file — none of
+     * which belongs on the main thread, even once at startup.
+     */
+    suspend fun initialise(): Boolean = withContext(Dispatchers.IO) {
         val result = TempestBridge.initialise(appContext)
         _initError.value = result.exceptionOrNull()?.let {
             it.message ?: "The Tempest core failed to start."
         }
-        return result.isSuccess
+        result.isSuccess
     }
 
     // --- state ------------------------------------------------------------
@@ -134,9 +143,15 @@ class TempestRepository(context: Context) {
     suspend fun saveConfig(config: TempestConfig): TempestConfig =
         TempestBridge.saveConfig(config)
 
-    fun storageVolumes(): List<StorageVolumeOption> = storagePrefs.availableVolumes()
+    /**
+     * Enumerating volumes stats every mounted filesystem, which can block on a
+     * slow or newly inserted card.
+     */
+    suspend fun storageVolumes(): List<StorageVolumeOption> =
+        withContext(Dispatchers.IO) { storagePrefs.availableVolumes() }
 
-    fun selectedGamesDirectory(): String? = storagePrefs.gamesDirectory()
+    suspend fun selectedGamesDirectory(): String? =
+        withContext(Dispatchers.IO) { storagePrefs.gamesDirectory() }
 
     /**
      * Choose where game payloads live.
@@ -145,6 +160,9 @@ class TempestRepository(context: Context) {
      * the next launch; the UI says so rather than silently doing half the job.
      */
     fun setGamesDirectory(path: String?) = storagePrefs.setGamesDirectory(path)
+
+    /** Whether the core has started; safe to call from anywhere. */
+    val isReady: Boolean get() = TempestBridge.isInitialised
 
     // --- diagnostics ------------------------------------------------------
 

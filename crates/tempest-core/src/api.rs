@@ -140,24 +140,36 @@ impl Tempest {
         self.runtime.install(id, progress, cancel).await
     }
 
-    /// Install every required component that is missing, in dependency order.
+    /// Install every component this host needs, in dependency order.
+    ///
+    /// The order matters: the guest filesystem has to exist before anything can
+    /// be installed *into* it. Components that do not apply to this host are
+    /// skipped — a desktop gets Wine from its distribution, so pulling an ARM64
+    /// Ubuntu image onto it would be nonsense.
     pub async fn install_required(
         &self,
         progress: Option<&ProgressSink>,
         cancel: &CancelToken,
     ) -> Result<()> {
-        // The rootfs must exist before anything can be installed into it.
+        use crate::runtime::manifest::{self, Necessity};
+
         const ORDER: &[ComponentId] = &[
             ComponentId::Rootfs,
             ComponentId::Hangover,
             ComponentId::Mesa,
+            ComponentId::Dxvk,
             ComponentId::Vortex,
         ];
+
+        let host = self.platform.info().kind;
         for id in ORDER {
             if cancel.is_cancelled() {
                 return Err(TempestError::Cancelled);
             }
-            let spec = crate::runtime::manifest::spec(*id);
+            let spec = manifest::spec(*id);
+            if spec.necessity(host) != Necessity::Required {
+                continue;
+            }
             if self.runtime.is_installed(&spec) {
                 continue;
             }

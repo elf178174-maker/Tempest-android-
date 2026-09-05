@@ -120,6 +120,19 @@ Exactly what it says. **Settings → Runtime → Install everything required**.
 
 A broken build. Install an APK from a successful CI run.
 
+### "Linux container" fails in Diagnostics
+
+This is the most important check on the screen, and the one to report first if
+it fails. It runs a single command (`uname -m`) inside the guest filesystem — no
+Wine, no Vulkan, no X server, no Vortex account involved. If it fails, nothing
+else can possibly work.
+
+- **"the container could not run a command"** — reinstall the Ubuntu base image
+  from Settings → Runtime.
+- **Anything else** — please send the report. It means PRoot could not start a
+  program on this device, which is the one part of the design that cannot be
+  verified without real hardware.
+
 ### "Wine could not reach an X server"
 
 The most common failure, and the easiest to fix.

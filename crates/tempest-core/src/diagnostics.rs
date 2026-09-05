@@ -216,10 +216,56 @@ pub fn run(platform: &PlatformRef) -> Report {
         checks.push(Check::pass("GPU access", gpu_nodes.join(", ")));
     }
 
+    // --- Can we enter the container at all? ---------------------------------
+    //
+    // This is the riskiest mechanism in the whole design: PRoot has to ptrace a
+    // child, substitute its own loader, and map a guest ELF out of app storage.
+    // Everything else depends on it, so it gets a check of its own that needs
+    // no Wine, no Vulkan, no X server and no Vortex account — just `uname -m`
+    // inside the guest. When this fails, nothing above it can work, and the
+    // failure is far easier to read on its own than as a Wine error.
+    let rootfs_ready = runtime.is_installed(&manifest::spec(manifest::ComponentId::Rootfs));
+    let can_enter_guest = rootfs_ready && guest.preflight().is_ok();
+
+    if can_enter_guest {
+        match runtime.run_in_guest("container-probe", "uname -m; echo TEMPEST_OK", &[], 60) {
+            Ok(lines) if lines.iter().any(|l| l.contains("TEMPEST_OK")) => {
+                let arch = lines
+                    .iter()
+                    .find(|l| !l.contains("TEMPEST_OK") && !l.trim().is_empty())
+                    .map(|l| l.trim().to_string())
+                    .unwrap_or_else(|| "unknown".into());
+                checks.push(Check::pass(
+                    "Linux container",
+                    format!("a program ran inside the guest filesystem (uname -m: {arch})"),
+                ));
+            }
+            Ok(lines) => checks.push(Check::fail(
+                "Linux container",
+                format!(
+                    "the container started but produced no output ({} line(s))",
+                    lines.len()
+                ),
+                "Reinstall the Ubuntu base image from Settings → Runtime.",
+            )),
+            Err(e) => checks.push(Check::fail(
+                "Linux container",
+                e.to_string(),
+                "Nothing can run until this works. Reinstall the Ubuntu base image \
+                 from Settings → Runtime; if it still fails, please send this \
+                 report — it means PRoot could not start a program on this device.",
+            )),
+        }
+    } else {
+        checks.push(Check::warn(
+            "Linux container",
+            "not probed — the Linux filesystem is not installed yet",
+            "Install the runtime components first.",
+        ));
+    }
+
     // --- Vulkan inside the container ---------------------------------------
-    if runtime.is_installed(&manifest::spec(manifest::ComponentId::Rootfs))
-        && guest.preflight().is_ok()
-    {
+    if can_enter_guest {
         match runtime.run_in_guest(
             "vulkaninfo",
             "command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>&1 | \
@@ -453,6 +499,41 @@ mod tests {
             Verdict::Warn,
             "an optional component must not fail"
         );
+    }
+
+    #[test]
+    fn the_container_is_probed_by_running_something_in_it() {
+        // The desktop platform has no container, so run_in_guest executes on
+        // the host — which still exercises the probe end to end.
+        let dir = tempfile::tempdir().unwrap();
+        let p = platform(dir.path(), HostKind::LinuxDesktop);
+
+        // Make the rootfs sentinel present so the probe is attempted.
+        let sentinel = p.paths().guest_rootfs().join("usr/bin/env");
+        std::fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
+        std::fs::write(&sentinel, b"x").unwrap();
+
+        let report = run(&p);
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "Linux container")
+            .expect("the container probe should have run");
+        assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
+        assert!(check.detail.contains("uname -m"), "{}", check.detail);
+    }
+
+    #[test]
+    fn the_container_probe_is_skipped_and_explained_when_nothing_is_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = run(&platform(dir.path(), HostKind::Android));
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "Linux container")
+            .expect("the container check should still be reported");
+        assert_eq!(check.verdict, Verdict::Warn);
+        assert!(check.fix.as_ref().unwrap().contains("runtime components"));
     }
 
     #[test]

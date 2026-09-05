@@ -297,6 +297,15 @@ The diagnostics screen probes `vulkaninfo` inside the container and reports
 which of these is in play, rather than letting a game fail with an unexplained
 crash.
 
+## Verifying the riskiest part without a game
+
+The single mechanism everything else rests on is PRoot successfully ptrace-ing a
+child, substituting its own loader, and mapping a guest ELF out of app storage.
+Diagnostics therefore has a dedicated **Linux container** check that runs
+`uname -m` inside the guest — no Wine, no Vulkan, no X server, no Vortex
+account. It isolates that one question, so a device report can distinguish "the
+container does not work here" from "Wine crashed" from "there is no GPU driver".
+
 ## Security decisions
 
 - `vortex://` links are validated field by field and then **re-serialised** from

@@ -239,9 +239,10 @@ pub fn catalogue() -> Vec<ComponentSpec> {
             approx_bytes: 20 * 1024 * 1024,
             license: "Zlib",
             upstream: "https://github.com/doitsujin/dxvk",
-            purpose: "Direct3D 9/10/11 to Vulkan. Only needed to override the \
-                      DXVK that Hangover already ships; the bundled build is \
-                      compiled for ARM64 and is usually the faster choice.",
+            purpose: "Direct3D 9/10/11 to Vulkan — what makes almost every \
+                      game render. On Android this is only needed to override \
+                      the DXVK that Hangover already ships, whose ARM64 build \
+                      is usually the faster choice.",
             sentinel: "opt/dxvk/x64/d3d11.dll",
         },
         ComponentSpec {

@@ -1,7 +1,6 @@
 package io.tempest.android.core
 
 import android.content.Context
-import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -101,16 +100,15 @@ class SecureStore(context: Context) {
     }
 
     private fun generateKey(): SecretKey {
-        // Try StrongBox first; not every device has one, and asking for it
-        // where it is absent throws rather than degrading.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching { generate(strongBox = true) }
-                .onSuccess {
-                    usedStrongBox = true
-                    return it
-                }
-                .onFailure { Log.i(TAG, "StrongBox unavailable; using the standard keystore") }
-        }
+        // Try StrongBox first. Not every device has a secure element, and
+        // asking for one where it is absent throws rather than degrading, so
+        // the fallback is a catch rather than a capability check.
+        runCatching { generate(strongBox = true) }
+            .onSuccess {
+                usedStrongBox = true
+                return it
+            }
+            .onFailure { Log.i(TAG, "StrongBox unavailable; using the standard keystore") }
         return generate(strongBox = false)
     }
 
@@ -126,11 +124,7 @@ class SecureStore(context: Context) {
             // No per-use authentication: the token has to be readable while a
             // game is running and the screen is off.
             .setUserAuthenticationRequired(false)
-            .apply {
-                if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    setIsStrongBoxBacked(true)
-                }
-            }
+            .apply { if (strongBox) setIsStrongBoxBacked(true) }
             .build()
         generator.init(spec)
         return generator.generateKey()

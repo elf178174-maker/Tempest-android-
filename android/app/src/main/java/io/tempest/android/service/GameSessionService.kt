@@ -186,7 +186,13 @@ class GameSessionService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(
-                Notification.Action.Builder(null, getString(R.string.action_stop), stop).build(),
+                // The Icon overload, explicitly: a bare null is ambiguous
+                // between Builder(Icon, ...) and Builder(int, ...).
+                Notification.Action.Builder(
+                    null as android.graphics.drawable.Icon?,
+                    getString(R.string.action_stop),
+                    stop,
+                ).build(),
             )
             .build()
     }

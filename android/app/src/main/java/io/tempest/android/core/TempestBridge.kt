@@ -265,27 +265,32 @@ object TempestBridge {
     }
 
     // -- native declarations -------------------------------------------------
+    //
+    // @JvmStatic puts these on the TempestBridge class itself, which is what
+    // makes the JNI symbol names (Java_io_tempest_android_core_TempestBridge_*)
+    // resolve to static methods taking a jclass. They are not private because
+    // @JvmStatic is not applicable to private declarations.
 
-    @JvmStatic private external fun nativeInit(configJson: String, callback: Any): String?
-    @JvmStatic private external fun nativeStatus(): String?
-    @JvmStatic private external fun nativeComponents(): String?
-    @JvmStatic private external fun nativeDiagnostics(): String?
-    @JvmStatic private external fun nativeConfig(): String?
-    @JvmStatic private external fun nativeSaveConfig(configJson: String): String?
-    @JvmStatic private external fun nativeCachedGames(): String?
-    @JvmStatic private external fun nativeSearch(query: String): String?
-    @JvmStatic private external fun nativeExportLogs(): String?
-    @JvmStatic private external fun nativeClearLogs(): String?
-    @JvmStatic private external fun nativeClearCache(): String?
-    @JvmStatic private external fun nativeParseUri(uri: String): String?
-    @JvmStatic private external fun nativeIsSessionActive(): Boolean
-    @JvmStatic private external fun nativeLogin(requestId: Long, username: String, password: String): String?
-    @JvmStatic private external fun nativeLogout(): String?
-    @JvmStatic private external fun nativeRefreshGames(requestId: Long): String?
-    @JvmStatic private external fun nativeInstallComponent(requestId: Long, component: String): String?
-    @JvmStatic private external fun nativeUninstallComponent(component: String): String?
-    @JvmStatic private external fun nativePlay(requestId: Long, gameId: Int): String?
-    @JvmStatic private external fun nativePlayUri(requestId: Long, uri: String): String?
-    @JvmStatic private external fun nativeStop(): String?
-    @JvmStatic private external fun nativeCancel(): String?
+    @JvmStatic external fun nativeInit(configJson: String, callback: Any): String?
+    @JvmStatic external fun nativeStatus(): String?
+    @JvmStatic external fun nativeComponents(): String?
+    @JvmStatic external fun nativeDiagnostics(): String?
+    @JvmStatic external fun nativeConfig(): String?
+    @JvmStatic external fun nativeSaveConfig(configJson: String): String?
+    @JvmStatic external fun nativeCachedGames(): String?
+    @JvmStatic external fun nativeSearch(query: String): String?
+    @JvmStatic external fun nativeExportLogs(): String?
+    @JvmStatic external fun nativeClearLogs(): String?
+    @JvmStatic external fun nativeClearCache(): String?
+    @JvmStatic external fun nativeParseUri(uri: String): String?
+    @JvmStatic external fun nativeIsSessionActive(): Boolean
+    @JvmStatic external fun nativeLogin(requestId: Long, username: String, password: String): String?
+    @JvmStatic external fun nativeLogout(): String?
+    @JvmStatic external fun nativeRefreshGames(requestId: Long): String?
+    @JvmStatic external fun nativeInstallComponent(requestId: Long, component: String): String?
+    @JvmStatic external fun nativeUninstallComponent(component: String): String?
+    @JvmStatic external fun nativePlay(requestId: Long, gameId: Int): String?
+    @JvmStatic external fun nativePlayUri(requestId: Long, uri: String): String?
+    @JvmStatic external fun nativeStop(): String?
+    @JvmStatic external fun nativeCancel(): String?
 }

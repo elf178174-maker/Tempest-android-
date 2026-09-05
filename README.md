@@ -137,6 +137,7 @@ killed.
 | Creating the Wine prefix and installing DXVK | ✅ |
 | Keeping a session alive in the background | ✅ |
 | Diagnostics and redacted log export | ✅ |
+| 190 automated tests, run on every push | ✅ |
 
 | Needs a real device to confirm | |
 |---|---|

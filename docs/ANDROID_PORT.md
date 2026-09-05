@@ -338,7 +338,7 @@ Working through the port surfaced these; each has a regression test.
 |---|---|---|
 | 1 | Understand and build upstream | Done — audited above; the CLI still builds and keeps its command surface. |
 | 2 | Android project and CI | Done — `.github/workflows/android.yml` produces `tempest-android-debug.apk`. |
-| 3 | Port the core | Done — workspace with the platform abstraction; 148 tests. |
+| 3 | Port the core | Done — workspace with the platform abstraction; 162 Rust tests. |
 | 4 | Android filesystem and config | Done — all paths injected from `Context`. |
 | 5 | Vortex auth and game discovery | Done — same wire protocol, Keystore storage, concurrent walk with caching. |
 | 6 | `vortex://` on Android | Done — intent filter, validating parser, paste fallback. |
@@ -351,3 +351,19 @@ Working through the port surfaced these; each has a regression test.
 
 Milestones 8, 10 and 11 cannot be verified in CI: they need a real ARM64 phone
 with a GPU. See `docs/TROUBLESHOOTING.md` for what to send back.
+
+## What the tests cover
+
+190 automated tests, none of which assert `true`:
+
+| Where | Count | What they pin down |
+|---|---|---|
+| `tempest-core` | 155 | URI validation (including hostile tokens), log redaction, path derivation, config round-trips, archive traversal and symlink escapes, PE inspection, the process backend's exec policy, the component catalogue, session failure explanations, diagnostics |
+| `tempest-jni` | 4 | The JSON envelope, including that every error kind survives the crossing and that a message containing quotes or newlines stays valid JSON |
+| `tempest` (CLI) | 3 | Plugin name sanitisation and compiler diagnostics |
+| Android JVM | 20 | The wire format between Rust and Kotlin — every model, decoded from the literal JSON the core emits — plus UI filtering |
+| Android instrumentation | 8 | The Keystore round trip, that the token is not stored in the clear, that `vortex://` resolves to this app, and that the native libraries are really in the installed APK |
+
+The CI workflow additionally verifies the built APK contains all four native
+libraries, because a build that silently drops them installs fine and then fails
+on first launch.

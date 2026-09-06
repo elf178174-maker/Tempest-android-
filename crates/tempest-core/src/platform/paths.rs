@@ -159,6 +159,10 @@ impl TempestPaths {
     /// Create every directory Tempest writes into. Called once at startup so
     /// later code never has to guess whether a parent exists.
     pub fn ensure_all(&self) -> Result<()> {
+        // The shader cache is in this list because it is bind-mounted into the
+        // container. PRoot warns on *every* guest command when a bind source is
+        // missing, which buried the real output of anything we ran.
+        let shaders = self.shader_cache_dir();
         for dir in [
             &self.root,
             &self.config,
@@ -169,6 +173,7 @@ impl TempestPaths {
             &self.games,
             &self.prefix,
             &self.tmp,
+            &shaders,
         ] {
             std::fs::create_dir_all(dir)?;
         }
@@ -233,6 +238,27 @@ mod tests {
             p.receiver_exe(),
             Path::new("/anywhere/at/all/vortex/receiver.exe")
         );
+    }
+
+    #[test]
+    fn every_bind_mounted_directory_exists_after_setup() {
+        // A missing bind source makes PRoot warn on every guest command, which
+        // is noisy at best and hides real output at worst.
+        let dir = tempfile::tempdir().unwrap();
+        let p = TempestPaths::with_root(dir.path().join("data"), dir.path().join("lib"));
+        p.ensure_all().unwrap();
+        for d in [
+            p.wine_prefix(),
+            p.games_dir(),
+            p.vortex_dir(),
+            &p.shader_cache_dir(),
+        ] {
+            assert!(
+                d.is_dir(),
+                "{} is bind-mounted but was not created",
+                d.display()
+            );
+        }
     }
 
     #[test]

@@ -228,26 +228,43 @@ pub fn run(platform: &PlatformRef) -> Report {
     let can_enter_guest = rootfs_ready && guest.preflight().is_ok();
 
     if can_enter_guest {
-        match runtime.run_in_guest("container-probe", "uname -m; echo TEMPEST_OK", &[], 60) {
-            Ok(lines) if lines.iter().any(|l| l.contains("TEMPEST_OK")) => {
-                let arch = lines
-                    .iter()
-                    .find(|l| !l.contains("TEMPEST_OK") && !l.trim().is_empty())
-                    .map(|l| l.trim().to_string())
-                    .unwrap_or_else(|| "unknown".into());
-                checks.push(Check::pass(
-                    "Linux container",
-                    format!("a program ran inside the guest filesystem (uname -m: {arch})"),
-                ));
+        // The value is fenced by markers rather than taken positionally.
+        // PRoot writes its own warnings to stderr, which run_in_guest folds in
+        // with stdout — the first version of this check happily reported one of
+        // those warnings as the CPU architecture.
+        match runtime.run_in_guest(
+            "container-probe",
+            "echo \"TEMPEST_ARCH=$(uname -m)\"; echo \"TEMPEST_LIBC=$(ls /lib/*-linux-gnu/libc.so.6 2>/dev/null | head -1)\"",
+            &[],
+            60,
+        ) {
+            Ok(lines) => {
+                let field = |key: &str| {
+                    lines
+                        .iter()
+                        .find_map(|l| l.trim().strip_prefix(key).map(str::to_string))
+                        .filter(|v| !v.is_empty())
+                };
+                match field("TEMPEST_ARCH=") {
+                    Some(arch) => {
+                        let libc = field("TEMPEST_LIBC=")
+                            .map(|_| ", glibc present")
+                            .unwrap_or("");
+                        checks.push(Check::pass(
+                            "Linux container",
+                            format!("a program ran inside the guest filesystem ({arch}{libc})"),
+                        ));
+                    }
+                    None => checks.push(Check::fail(
+                        "Linux container",
+                        format!(
+                            "the container started but produced no usable output ({} line(s))",
+                            lines.len()
+                        ),
+                        "Reinstall the Ubuntu base image from Settings → Runtime.",
+                    )),
+                }
             }
-            Ok(lines) => checks.push(Check::fail(
-                "Linux container",
-                format!(
-                    "the container started but produced no output ({} line(s))",
-                    lines.len()
-                ),
-                "Reinstall the Ubuntu base image from Settings → Runtime.",
-            )),
             Err(e) => checks.push(Check::fail(
                 "Linux container",
                 e.to_string(),
@@ -265,38 +282,74 @@ pub fn run(platform: &PlatformRef) -> Report {
     }
 
     // --- Vulkan inside the container ---------------------------------------
+    //
+    // Every device is listed, not just the first. A phone can enumerate both a
+    // hardware driver and lavapipe, and which one you get decides whether a
+    // game is playable or a slideshow — so reporting only the first device
+    // hides the answer to the most important question on this screen.
     if can_enter_guest {
         match runtime.run_in_guest(
             "vulkaninfo",
-            "command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>&1 | \
-             grep -E 'deviceName|driverName' | head -8 || echo NO_VULKANINFO",
+            "command -v vulkaninfo >/dev/null 2>&1 || { echo NO_VULKANINFO; exit 0; }; \
+             vulkaninfo --summary 2>/dev/null | sed -n 's/.*deviceName *= *//p'",
             &[],
-            120,
+            180,
         ) {
             Ok(lines) => {
-                let joined = lines.join(" ");
-                if joined.contains("NO_VULKANINFO") {
+                let devices: Vec<String> = lines
+                    .iter()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty() && !l.contains("NO_VULKANINFO") && !is_guest_noise(l))
+                    .collect();
+
+                if lines.iter().any(|l| l.contains("NO_VULKANINFO")) {
                     checks.push(Check::warn(
                         "Vulkan (in container)",
                         "vulkaninfo is not installed, so the driver could not be probed",
                         install_hint("the Vulkan/Mesa component"),
                     ));
-                } else if let Some(device) = lines.iter().find(|l| l.contains("deviceName")) {
-                    checks.push(Check::pass("Vulkan (in container)", device.trim()));
-                } else {
+                } else if devices.is_empty() {
                     checks.push(Check::fail(
                         "Vulkan (in container)",
                         "vulkaninfo reported no devices",
                         "Switch the Vulkan driver to lavapipe in Settings → Graphics to \
                          confirm the rest of the stack works, then investigate the GPU driver.",
                     ));
+                } else {
+                    let hardware: Vec<&String> = devices
+                        .iter()
+                        .filter(|d| !is_software_renderer(d))
+                        .collect();
+                    if hardware.is_empty() {
+                        checks.push(Check::warn(
+                            "Vulkan (in container)",
+                            format!("software rendering only — {}", devices.join(", ")),
+                            "Games will run far too slowly to play, but everything else in \
+                             the stack is working. Hardware acceleration needs a Mesa Turnip \
+                             build with the KGSL backend; see docs/ANDROID_PORT.md.",
+                        ));
+                    } else {
+                        checks.push(Check::pass(
+                            "Vulkan (in container)",
+                            format!(
+                                "hardware device found: {}",
+                                hardware
+                                    .iter()
+                                    .map(|d| d.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        ));
+                    }
                 }
             }
             Err(e) => checks.push(Check::fail(
                 "Vulkan (in container)",
                 e.to_string(),
-                "The container could not run a command. Reinstall the Ubuntu base \
-                 image from Settings → Runtime.",
+                format!(
+                    "The container could not run a command. {}",
+                    install_hint("the Ubuntu base image again")
+                ),
             )),
         }
     } else {
@@ -368,6 +421,22 @@ pub fn run(platform: &PlatformRef) -> Report {
         warnings,
         platform: info,
     }
+}
+
+/// Mesa's software rasterisers. Anything else enumerated by the Vulkan loader
+/// is a real GPU driver.
+fn is_software_renderer(device: &str) -> bool {
+    let d = device.to_ascii_lowercase();
+    ["llvmpipe", "lavapipe", "softpipe", "swiftshader"]
+        .iter()
+        .any(|s| d.contains(s))
+}
+
+/// PRoot and the loader write diagnostics to stderr, which the guest runner
+/// folds in with stdout.
+fn is_guest_noise(line: &str) -> bool {
+    let l = line.to_ascii_lowercase();
+    l.starts_with("proot") || l.contains("can't sanitize") || l.contains("ldconfig")
 }
 
 /// Collapse the multi-line string literals in the catalogue into one line.
@@ -502,6 +571,28 @@ mod tests {
     }
 
     #[test]
+    fn software_renderers_are_recognised_as_such() {
+        // The exact string a real device reported.
+        assert!(is_software_renderer("llvmpipe (LLVM 20.1.2, 128 bits)"));
+        assert!(is_software_renderer("lavapipe"));
+        assert!(is_software_renderer("SwiftShader Device"));
+        // Real drivers must not be mistaken for one.
+        assert!(!is_software_renderer("Turnip Adreno (TM) 750"));
+        assert!(!is_software_renderer("Mali-G715"));
+    }
+
+    #[test]
+    fn proot_diagnostics_are_not_mistaken_for_output() {
+        // This exact line was reported as the CPU architecture by the first
+        // version of the container probe.
+        assert!(is_guest_noise(
+            "proot warning: can't sanitize binding \"/data/user/0/x/cache/shaders\": No such file or directory"
+        ));
+        assert!(!is_guest_noise("llvmpipe (LLVM 20.1.2, 128 bits)"));
+        assert!(!is_guest_noise("aarch64"));
+    }
+
+    #[test]
     fn the_container_is_probed_by_running_something_in_it() {
         // The desktop platform has no container, so run_in_guest executes on
         // the host — which still exercises the probe end to end.
@@ -520,7 +611,16 @@ mod tests {
             .find(|c| c.name == "Linux container")
             .expect("the container probe should have run");
         assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
-        assert!(check.detail.contains("uname -m"), "{}", check.detail);
+        // The reported architecture must be the real one, not a stray stderr
+        // line that happened to arrive first.
+        assert!(
+            check.detail.contains(std::env::consts::ARCH)
+                || check.detail.contains("x86_64")
+                || check.detail.contains("aarch64"),
+            "{}",
+            check.detail
+        );
+        assert!(!check.detail.contains("proot"), "{}", check.detail);
     }
 
     #[test]

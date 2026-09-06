@@ -257,6 +257,23 @@ impl SessionManager {
 
         let guest_env = GuestEnv::new(&self.platform);
         guest_env.preflight()?;
+
+        // Wine draws through X11, which Android does not have. Checking here
+        // costs nothing and saves the user a two-minute prefix build followed
+        // by an opaque Wine error.
+        if guest_env.is_containerised() && !x_display_available() {
+            return Err(TempestError::missing(
+                "an X server",
+                format!(
+                    "Wine has nowhere to draw. Install the Termux:X11 companion app \
+                     (github.com/termux/termux-x11), open it, and leave it running in \
+                     the background — then launch again. Tempest is looking for \
+                     display {}.",
+                    config.graphics.display
+                ),
+            ));
+        }
+
         self.ensure_prefix(&runtime, &config)?;
 
         self.set_status(SessionState::StartingVortex, "Starting Vortex…");
@@ -541,6 +558,20 @@ fn explain_failure(status: &ProcessStatus, output: &[String]) -> String {
     }
 }
 
+/// Whether an X display socket is present.
+///
+/// Termux:X11 also offers an abstract socket that cannot be probed without
+/// connecting, so a filesystem socket is the only thing checkable up front.
+/// Both the standard path and Termux's own location are considered.
+fn x_display_available() -> bool {
+    [
+        "/tmp/.X11-unix/X0",
+        "/data/data/com.termux/files/usr/tmp/.X11-unix/X0",
+    ]
+    .iter()
+    .any(|p| std::path::Path::new(p).exists())
+}
+
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -658,6 +689,16 @@ mod tests {
         assert!(json.contains("\"state\":\"running\""), "{json}");
         let back: SessionSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(back.game_id, Some(4));
+    }
+
+    #[test]
+    fn a_missing_x_server_is_caught_before_the_prefix_is_built() {
+        // Building the prefix takes minutes on an emulated stack. Failing fast
+        // with a specific instruction beats failing slowly with a Wine error.
+        assert!(
+            !x_display_available() || std::path::Path::new("/tmp/.X11-unix/X0").exists(),
+            "the probe must only report a display that actually exists"
+        );
     }
 
     #[test]

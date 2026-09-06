@@ -141,6 +141,10 @@ Wine draws through X11, which Android does not have. Install
 **[Termux:X11](https://github.com/termux/termux-x11/releases)**, open it, and
 leave it running in the background *before* launching a game. Then try again.
 
+**Termux:X11 is not the same app as Termux.** Installing plain Termux does
+nothing here — you need the separate `app-*-debug.apk` from the Termux:X11
+releases page, and you have to *open* it at least once so it starts listening.
+
 If Termux:X11 is running and this still appears, check that
 **Settings → Graphics → display** is `:0`.
 

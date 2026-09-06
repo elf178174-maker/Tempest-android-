@@ -650,8 +650,19 @@ impl RuntimeManager {
         if let Ok(entries) = std::fs::read_dir(cache) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                // Keep the game catalogue: it is what makes the app usable offline.
-                if path.file_name().is_some_and(|n| n == "games.json") {
+                // Two things in here are not downloads and must survive:
+                //
+                //   games.json  the catalogue, which is what makes the app
+                //               usable offline
+                //   shaders/    compiled shader caches, which cost real minutes
+                //               of gameplay to rebuild
+                //
+                // The button says "clear cached downloads"; deleting either of
+                // these would be doing something the user did not ask for.
+                let keep = path
+                    .file_name()
+                    .is_some_and(|n| n == "games.json" || n == "shaders");
+                if keep {
                     continue;
                 }
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);

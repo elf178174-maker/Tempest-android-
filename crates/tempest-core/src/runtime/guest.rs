@@ -323,6 +323,7 @@ const NOISE: &[&str] = &[
     "EnableNonClientDpiScaling",
     "DwmSetWindowAttribute",
     "proot info:",
+    "proot warning:",
     "MESA-INTEL: warning",
 ];
 
@@ -566,6 +567,9 @@ mod tests {
         assert!(is_noise("fixme:d3d:whatever"));
         assert!(is_noise("libEGL warning: DRI2"));
         assert!(is_noise("proot info: vpid 1: terminated"));
+        assert!(is_noise(
+            "proot warning: can't sanitize binding \"/data/...\""
+        ));
         assert!(!is_noise(
             "err:module:import_dll Library d3d11.dll not found"
         ));

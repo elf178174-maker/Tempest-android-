@@ -142,8 +142,8 @@ impl Tempest {
         cancel: &CancelToken,
         progress: Option<&(dyn Fn(usize, u32) + Send + Sync)>,
     ) -> Result<GameCatalogue> {
-        let token = crate::auth::require_token(&self.platform)?;
-        let catalogue = crate::games::discover(&token, cancel, progress).await?;
+        let cookies = crate::auth::stored_cookie_header(&self.platform)?;
+        let catalogue = crate::games::discover(&cookies, cancel, progress).await?;
         catalogue.save(self.platform.paths())?;
         Ok(catalogue)
     }
@@ -232,8 +232,8 @@ impl Tempest {
 
     /// Launch by game id: ask Vortex for the link, then start it.
     pub async fn play(&self, game_id: u32) -> Result<()> {
-        let token = crate::auth::require_token(&self.platform)?;
-        let link = crate::auth::fetch_play_link(&token, game_id).await?;
+        let cookies = crate::auth::stored_cookie_header(&self.platform)?;
+        let link = crate::auth::fetch_play_link(&cookies, game_id).await?;
         let name = self.cached_games().get(game_id).map(|g| g.name.clone());
         self.session.launch(&link, name)
     }

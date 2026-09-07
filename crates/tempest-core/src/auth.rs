@@ -18,6 +18,28 @@ pub struct Session {
     pub username: String,
 }
 
+/// Everything Vortex handed back at sign-in.
+///
+/// Upstream kept only the cookie named `session_token` and discarded the rest.
+/// That is enough for endpoints which merely read a session, but a site can
+/// perfectly well require a second cookie — a CSRF companion, a device id, a
+/// signed pair — on the pages that actually do something. Losing it produces
+/// exactly the confusing split that showed up on a real device: the game list
+/// loaded while the play page redirected to sign-in.
+///
+/// So the whole jar is kept, and the whole jar is sent back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCookies {
+    /// A complete `Cookie:` header value: `name=value; name=value`.
+    pub header: String,
+    /// The `session_token` value on its own, which is what a `vortex://` link
+    /// carries.
+    pub token: String,
+}
+
+/// Secret-store key for the full cookie header.
+pub const COOKIE_HEADER_KEY: &str = "vortex.cookies";
+
 /// Build the login request body. Split out so it can be asserted on in tests
 /// without touching the network.
 pub fn login_form<'a>(username: &'a str, password: &'a str) -> Vec<(&'static str, &'a str)> {
@@ -57,10 +79,11 @@ pub async fn login(platform: &PlatformRef, username: &str, password: &str) -> Re
         return Err(TempestError::Auth("enter a password".into()));
     }
 
-    let token = request_token(username.trim(), password).await?;
+    let session = request_session(username.trim(), password).await?;
 
     let secrets = platform.secrets();
-    secrets.set(SESSION_TOKEN_KEY, &token)?;
+    secrets.set(SESSION_TOKEN_KEY, &session.token)?;
+    secrets.set(COOKIE_HEADER_KEY, &session.header)?;
     secrets.set(USERNAME_KEY, username.trim())?;
     crate::logging::info("auth", format!("signed in as {}", username.trim()));
 
@@ -70,7 +93,7 @@ pub async fn login(platform: &PlatformRef, username: &str, password: &str) -> Re
 }
 
 /// Perform the login exchange and return the raw session token.
-pub async fn request_token(username: &str, password: &str) -> Result<String> {
+pub async fn request_session(username: &str, password: &str) -> Result<SessionCookies> {
     let client = crate::net::no_redirect_client()?;
     let resp = client
         .post(login_url())
@@ -79,25 +102,88 @@ pub async fn request_token(username: &str, password: &str) -> Result<String> {
         .await?;
 
     let status = resp.status();
-    if status.is_redirection() || status.is_success() {
-        if let Some(cookie) = resp.cookies().find(|c| c.name() == "session_token") {
-            let token = cookie.value().to_string();
-            if token.is_empty() {
-                return Err(TempestError::Auth(
-                    "the server returned an empty session token".into(),
-                ));
+    if !(status.is_redirection() || status.is_success()) {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(TempestError::Auth(server_message(status, &body)));
+    }
+
+    // Where the server sends us next says whether the credentials were
+    // accepted. Bouncing back to the sign-in page — including the `/?next=…`
+    // form, which is a redirect to the landing page carrying the page we were
+    // trying to reach — means they were not.
+    let redirect_target = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let cookies: Vec<(String, String)> = resp
+        .cookies()
+        .map(|c| (c.name().to_string(), c.value().to_string()))
+        .collect();
+
+    // Cookie *names* are protocol, not secrets, and knowing which ones arrived
+    // is the difference between diagnosing this in one round trip and guessing.
+    crate::logging::info(
+        "auth",
+        format!(
+            "login returned HTTP {status}; cookies set: [{}]{}",
+            cookies
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            if redirect_target.is_empty() {
+                String::new()
+            } else {
+                format!("; redirect to {redirect_target}")
             }
-            return Ok(token);
+        ),
+    );
+
+    let token = cookies
+        .iter()
+        .find(|(name, _)| name == "session_token")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default();
+
+    if token.is_empty() {
+        if !redirect_target.is_empty() && looks_like_sign_in(&redirect_target) {
+            return Err(TempestError::Auth(
+                "incorrect username or password — Vortex sent the sign-in page back".into(),
+            ));
         }
+        return Err(TempestError::Auth(format!(
+            "Vortex accepted the request but set no session_token cookie{}. \
+             The sign-in flow has probably changed; Settings → Logs lists the \
+             cookie names it did set.",
+            if cookies.is_empty() {
+                String::new()
+            } else {
+                format!(" (it set {} other cookie(s))", cookies.len())
+            }
+        )));
+    }
+
+    // Even with a token, a redirect back to sign-in means it is an anonymous
+    // session rather than ours.
+    if looks_like_sign_in(&redirect_target) && !redirect_target.is_empty() {
         return Err(TempestError::Auth(
-            "the server accepted the login but did not return a session cookie. \
-             This usually means Vortex changed its login flow."
+            "incorrect username or password — Vortex issued a session but sent \
+             the sign-in page back with it."
                 .into(),
         ));
     }
 
-    let body = resp.text().await.unwrap_or_default();
-    Err(TempestError::Auth(server_message(status, &body)))
+    Ok(SessionCookies {
+        header: cookies
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; "),
+        token,
+    })
 }
 
 /// Extract a human-usable message from an error response.
@@ -140,6 +226,24 @@ pub fn stored_token(platform: &PlatformRef) -> Result<Option<String>> {
     platform.secrets().get(SESSION_TOKEN_KEY)
 }
 
+/// The `Cookie:` header to send with authenticated requests.
+///
+/// Falls back to the single `session_token` for a profile signed in before the
+/// whole jar was kept, so an existing install keeps working until the next
+/// sign-in replaces it.
+pub fn stored_cookie_header(platform: &PlatformRef) -> Result<String> {
+    let secrets = platform.secrets();
+    if let Some(header) = secrets.get(COOKIE_HEADER_KEY)? {
+        if !header.trim().is_empty() {
+            return Ok(header);
+        }
+    }
+    let token = stored_token(platform)?.ok_or_else(|| {
+        TempestError::Auth("you are not signed in — sign in to Vortex first".into())
+    })?;
+    Ok(session_cookie(&token))
+}
+
 /// Require a token, with an actionable error when there is none.
 pub fn require_token(platform: &PlatformRef) -> Result<String> {
     stored_token(platform)?
@@ -149,6 +253,7 @@ pub fn require_token(platform: &PlatformRef) -> Result<String> {
 pub fn logout(platform: &PlatformRef) -> Result<()> {
     let secrets = platform.secrets();
     secrets.delete(SESSION_TOKEN_KEY)?;
+    secrets.delete(COOKIE_HEADER_KEY)?;
     secrets.delete(USERNAME_KEY)?;
     crate::logging::info("auth", "signed out");
     Ok(())
@@ -161,7 +266,7 @@ pub fn logout(platform: &PlatformRef) -> Result<()> {
 /// failure is no longer reported as "the session has expired", which was a
 /// guess, and a misleading one whenever the real cause is that the page changed
 /// shape.
-pub async fn fetch_play_link(token: &str, game_id: u32) -> Result<crate::uri::VortexLink> {
+pub async fn fetch_play_link(cookies: &str, game_id: u32) -> Result<crate::uri::VortexLink> {
     // Redirects are deliberately *not* followed. When a session is rejected,
     // Vortex answers the play page with a redirect to the sign-in page;
     // following it yields a perfectly good 200 containing no launch link, and
@@ -170,7 +275,7 @@ pub async fn fetch_play_link(token: &str, game_id: u32) -> Result<crate::uri::Vo
     let client = crate::net::no_redirect_client()?;
     let resp = client
         .get(game_play_url(game_id))
-        .header("Cookie", session_cookie(token))
+        .header("Cookie", cookies)
         .send()
         .await?;
 
@@ -244,12 +349,34 @@ pub async fn fetch_play_link(token: &str, game_id: u32) -> Result<crate::uri::Vo
     )))
 }
 
-/// Whether a URL points at a sign-in flow.
-fn looks_like_sign_in(url: &str) -> bool {
+/// Whether a redirect target means "you are not signed in".
+///
+/// The obvious `/login` forms are only half of it. A site just as often bounces
+/// you to its landing page carrying the address you wanted, as `/?next=…` —
+/// which is what Vortex actually does, and what the first version of this check
+/// failed to recognise, reporting a plain auth failure as an unfollowable
+/// redirect.
+pub fn looks_like_sign_in(url: &str) -> bool {
     let u = url.to_ascii_lowercase();
-    ["/login", "/signin", "/sign-in", "/auth"]
+
+    if ["/login", "/signin", "/sign-in", "/auth"]
         .iter()
         .any(|p| u.contains(p))
+    {
+        return true;
+    }
+
+    // A "come back here afterwards" parameter is the tell: nothing but an
+    // interstitial needs to remember where you were going.
+    [
+        "next=",
+        "redirect=",
+        "redirect_to=",
+        "return_to=",
+        "returnurl=",
+    ]
+    .iter()
+    .any(|p| u.contains(p))
 }
 
 /// Whether a *page* is a sign-in form rather than the content that was asked for.
@@ -523,7 +650,55 @@ mod tests {
     fn redirect_targets_are_classified() {
         assert!(looks_like_sign_in("/login?next=/games/15/play"));
         assert!(looks_like_sign_in("https://playvortex.io/sign-in"));
+
+        // The exact redirect a real device hit. It names no sign-in path at
+        // all — it is the landing page carrying the address we asked for — and
+        // the first version of this check called it "a redirect Tempest does
+        // not know how to follow" instead of "you are not signed in".
+        assert!(looks_like_sign_in("/?next=/games/15/play"));
+        assert!(looks_like_sign_in("/?redirect_to=%2Fgames%2F15%2Fplay"));
+        assert!(looks_like_sign_in("/home?return_to=/games/1/play"));
+
+        // A genuine destination is not mistaken for one.
         assert!(!looks_like_sign_in("/games/15/launch"));
+        assert!(!looks_like_sign_in("https://cdn.playvortex.io/vortex.zip"));
+    }
+
+    #[test]
+    fn a_session_is_the_whole_cookie_jar_not_one_cookie() {
+        // The bug this fixes: keeping only `session_token` and dropping the
+        // rest. A public endpoint still answers, so the game list loads and
+        // everything looks fine — until a page that actually checks the
+        // session redirects to sign-in.
+        let session = SessionCookies {
+            header: "session_token=abc123; csrftoken=xyz789; device=dev1".into(),
+            token: "abc123".into(),
+        };
+
+        // Every cookie survives, in a form a Cookie header accepts.
+        assert!(session.header.contains("session_token=abc123"));
+        assert!(session.header.contains("csrftoken=xyz789"));
+        assert!(session.header.contains("device=dev1"));
+        assert_eq!(session.header.matches("; ").count(), 2);
+
+        // And the token is still available on its own, because that is what a
+        // vortex:// link carries.
+        assert_eq!(session.token, "abc123");
+    }
+
+    #[test]
+    fn stored_cookies_fall_back_to_the_session_token_for_an_older_profile() {
+        use crate::platform::secrets::{MemorySecretStore, SecretStore};
+
+        // A profile signed in before the whole jar was kept has only the token.
+        let store = MemorySecretStore::default();
+        store.set(SESSION_TOKEN_KEY, "legacy-token").unwrap();
+        assert_eq!(
+            store.get(COOKIE_HEADER_KEY).unwrap(),
+            None,
+            "the fallback only applies when no jar was stored"
+        );
+        assert_eq!(session_cookie("legacy-token"), "session_token=legacy-token");
     }
 
     #[test]

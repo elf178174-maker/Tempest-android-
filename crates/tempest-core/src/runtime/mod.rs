@@ -165,7 +165,7 @@ impl RuntimeManager {
     async fn resolve_url(
         &self,
         spec: &ComponentSpec,
-        token: Option<&str>,
+        cookies: Option<&str>,
     ) -> Result<(String, Option<String>)> {
         Ok(match &spec.source {
             Source::Pinned { url, sha256 } => (
@@ -177,7 +177,7 @@ impl RuntimeManager {
                 },
             ),
             Source::VortexDownload { url } => {
-                let _ = token;
+                let _ = cookies;
                 ((*url).to_string(), None)
             }
             Source::GithubLatest { repo, asset_suffix } => {
@@ -256,8 +256,8 @@ impl RuntimeManager {
             return Ok(());
         }
 
-        let token = crate::auth::stored_token(&self.platform)?;
-        let (url, expected) = self.resolve_url(spec, token.as_deref()).await?;
+        let cookies = crate::auth::stored_cookie_header(&self.platform).ok();
+        let (url, expected) = self.resolve_url(spec, cookies.as_deref()).await?;
 
         let archive_path = paths.cache_dir().join(spec.archive_name);
         let id = spec.id;
@@ -271,28 +271,28 @@ impl RuntimeManager {
         let client = crate::net::client()?;
 
         // Vortex's download endpoint needs the session cookie.
-        let downloaded = if let (Source::VortexDownload { .. }, Some(tok)) = (&spec.source, &token)
-        {
-            download_authenticated(
-                &client,
-                &url,
-                tok,
-                &archive_path,
-                progress_fn.as_ref(),
-                cancel,
-            )
-            .await?
-        } else {
-            crate::net::download_verified(
-                &client,
-                &url,
-                &archive_path,
-                expected.as_deref(),
-                progress_fn.as_ref(),
-                cancel,
-            )
-            .await?
-        };
+        let downloaded =
+            if let (Source::VortexDownload { .. }, Some(jar)) = (&spec.source, &cookies) {
+                download_authenticated(
+                    &client,
+                    &url,
+                    jar,
+                    &archive_path,
+                    progress_fn.as_ref(),
+                    cancel,
+                )
+                .await?
+            } else {
+                crate::net::download_verified(
+                    &client,
+                    &url,
+                    &archive_path,
+                    expected.as_deref(),
+                    progress_fn.as_ref(),
+                    cancel,
+                )
+                .await?
+            };
 
         if let Some(p) = progress {
             p(spec.id, InstallPhase::Verifying);
@@ -687,7 +687,7 @@ const GUEST_STAGING: &str = guest::GUEST_STAGING;
 async fn download_authenticated(
     client: &reqwest::Client,
     url: &str,
-    token: &str,
+    cookies: &str,
     dest: &std::path::Path,
     progress: Option<&crate::net::ProgressFn>,
     cancel: &CancelToken,
@@ -698,11 +698,7 @@ async fn download_authenticated(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let resp = client
-        .get(url)
-        .header("Cookie", crate::auth::session_cookie(token))
-        .send()
-        .await?;
+    let resp = client.get(url).header("Cookie", cookies).send().await?;
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(TempestError::Auth(

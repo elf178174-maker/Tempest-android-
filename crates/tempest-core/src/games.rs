@@ -113,10 +113,10 @@ pub fn parse_game(id: u32, body: &serde_json::Value) -> Option<Game> {
 }
 
 /// Fetch a single game by id.
-pub async fn fetch_one(client: &reqwest::Client, token: &str, id: u32) -> Result<Option<Game>> {
+pub async fn fetch_one(client: &reqwest::Client, cookies: &str, id: u32) -> Result<Option<Game>> {
     let resp = client
         .get(crate::auth::game_api_url(id))
-        .header("Cookie", crate::auth::session_cookie(token))
+        .header("Cookie", cookies)
         .send()
         .await?;
 
@@ -141,7 +141,7 @@ pub async fn fetch_one(client: &reqwest::Client, token: &str, id: u32) -> Result
 
 /// Walk the catalogue. `progress(found_so_far, highest_id_probed)`.
 pub async fn discover(
-    token: &str,
+    cookies: &str,
     cancel: &crate::net::CancelToken,
     progress: Option<&(dyn Fn(usize, u32) + Send + Sync)>,
 ) -> Result<GameCatalogue> {
@@ -157,7 +157,7 @@ pub async fn discover(
 
         let ids: Vec<u32> = (next_id..next_id + BATCH).collect();
         let results =
-            futures_util::future::join_all(ids.iter().map(|id| fetch_one(&client, token, *id)))
+            futures_util::future::join_all(ids.iter().map(|id| fetch_one(&client, cookies, *id)))
                 .await;
 
         for (id, result) in ids.iter().zip(results) {

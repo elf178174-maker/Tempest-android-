@@ -156,12 +156,18 @@ pub fn logout(platform: &PlatformRef) -> Result<()> {
 
 /// Ask Vortex for the `vortex://` launch link for a game.
 ///
-/// The play page embeds the URI in its HTML. Upstream scanned for the first
-/// `vortex://` occurrence and cut at the first quote or whitespace; that is
-/// kept, but the result is then run through the validating parser so a
-/// malformed or hostile page cannot produce a command line we would forward.
+/// Upstream scanned the play page's HTML for a literal `vortex://` substring.
+/// That is kept as the first strategy, but it is no longer the only one — and a
+/// failure is no longer reported as "the session has expired", which was a
+/// guess, and a misleading one whenever the real cause is that the page changed
+/// shape.
 pub async fn fetch_play_link(token: &str, game_id: u32) -> Result<crate::uri::VortexLink> {
-    let client = crate::net::client()?;
+    // Redirects are deliberately *not* followed. When a session is rejected,
+    // Vortex answers the play page with a redirect to the sign-in page;
+    // following it yields a perfectly good 200 containing no launch link, and
+    // the old code reported that as "no vortex:// link" — blaming the page for
+    // what is actually an authentication problem.
+    let client = crate::net::no_redirect_client()?;
     let resp = client
         .get(game_play_url(game_id))
         .header("Cookie", session_cookie(token))
@@ -169,10 +175,41 @@ pub async fn fetch_play_link(token: &str, game_id: u32) -> Result<crate::uri::Vo
         .await?;
 
     let status = resp.status();
+
+    if status.is_redirection() {
+        let target = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        crate::logging::warn(
+            "auth",
+            format!("play page for game {game_id} redirected to {target}"),
+        );
+        if looks_like_sign_in(&target) {
+            return Err(TempestError::Auth(
+                "Vortex sent the request back to the sign-in page, so the stored \
+                 session is no longer valid. Sign out and in again from Settings."
+                    .into(),
+            ));
+        }
+        return Err(TempestError::Network(format!(
+            "the play page for game {game_id} redirected to '{target}', which \
+             Tempest does not know how to follow"
+        )));
+    }
+
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(TempestError::Auth(
-            "your Vortex session has expired — sign in again".into(),
+            "Vortex rejected the stored session — sign out and in again from Settings.".into(),
         ));
+    }
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(TempestError::Other(format!(
+            "Vortex has no play page for game {game_id}. The cached game list may \
+             be stale — refresh it from the Games screen."
+        )));
     }
     if !status.is_success() {
         return Err(TempestError::Network(format!(
@@ -181,25 +218,169 @@ pub async fn fetch_play_link(token: &str, game_id: u32) -> Result<crate::uri::Vo
     }
 
     let html = resp.text().await?;
-    let raw = extract_vortex_uri(&html).ok_or_else(|| {
-        TempestError::Auth(format!(
-            "no vortex:// link on the play page for game {game_id} — \
-             the account may not own this game, or the session has expired"
-        ))
-    })?;
-    crate::uri::parse(&raw)
+
+    if let Some(raw) = extract_vortex_uri(&html) {
+        return crate::uri::parse(&raw);
+    }
+
+    // Nothing matched. Record what the page looked like — its structure, never
+    // its content — so the failure is diagnosable from a log the user can share
+    // without hesitation.
+    crate::logging::warn("auth", describe_play_page(&html, game_id));
+
+    if looks_like_sign_in_page(&html) {
+        return Err(TempestError::Auth(
+            "the play page came back as a sign-in form, so the stored session is \
+             no longer valid. Sign out and in again from Settings."
+                .into(),
+        ));
+    }
+
+    Err(TempestError::Other(format!(
+        "Vortex's play page for game {game_id} loaded, but contains no launch link \
+         in any form Tempest recognises. That normally means the website changed. \
+         Settings → Logs now holds a description of the page's structure — please \
+         send it; it contains no personal data."
+    )))
 }
 
-/// Pull the first `vortex://...` token out of a page of HTML.
+/// Whether a URL points at a sign-in flow.
+fn looks_like_sign_in(url: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    ["/login", "/signin", "/sign-in", "/auth"]
+        .iter()
+        .any(|p| u.contains(p))
+}
+
+/// Whether a *page* is a sign-in form rather than the content that was asked for.
+fn looks_like_sign_in_page(html: &str) -> bool {
+    let h = html.to_ascii_lowercase();
+    let password_field = h.contains("type=\"password\"") || h.contains("type='password'");
+    password_field && (h.contains("login") || h.contains("sign in") || h.contains("signin"))
+}
+
+/// Describe a page that failed to yield a launch link.
+///
+/// Deliberately describes rather than quotes. The page belongs to the user's
+/// account and may carry their name or other details, none of which is needed
+/// to work out why the parser missed; what matters is which shapes are present.
+pub fn describe_play_page(html: &str, game_id: u32) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut notes: Vec<String> = vec![format!("{} bytes", html.len())];
+
+    // A page title is metadata, not user content.
+    if let Some(title) = between(&lower, "<title>", "</title>") {
+        notes.push(format!("title {title:?}"));
+    }
+
+    for (label, needle) in [
+        ("mentions 'vortex:'", "vortex:"),
+        ("mentions percent-encoded 'vortex%3a'", "vortex%3a"),
+        ("mentions 'launch'", "launch"),
+        ("mentions 'token'", "token"),
+        ("has a password field", "type=\"password\""),
+        ("has a <script> block", "<script"),
+        ("mentions 'application/json'", "application/json"),
+    ] {
+        if lower.contains(needle) {
+            notes.push(label.to_string());
+        }
+    }
+
+    // If "vortex:" appears at all, report how it is *written*. That single fact
+    // decides which unescaping the parser needs, and it reveals nothing: every
+    // alphanumeric character is replaced with 'x' before it is recorded.
+    if let Some(i) = lower.find("vortex:") {
+        let shape: String = lower[i..]
+            .chars()
+            .take(28)
+            .map(|c| if c.is_ascii_alphanumeric() { 'x' } else { c })
+            .collect();
+        notes.push(format!("first 'vortex:' is written {shape:?}"));
+    }
+
+    format!("play page for game {game_id}: {}", notes.join("; "))
+}
+
+fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = haystack.find(open)? + open.len();
+    let end = haystack[start..].find(close)? + start;
+    Some(haystack[start..end].trim())
+}
+
+/// Pull a `vortex://` launch link out of a page.
+///
+/// Upstream looked for one exact spelling. The same URI can appear in several
+/// forms depending on how the page emitted it, and all of them decode to the
+/// same link:
+///
+/// * plain, in an `href`                   `vortex://play?game=4&token=x`
+/// * with HTML-escaped ampersands          `vortex://play?game=4&amp;token=x`
+/// * inside a JSON or JavaScript string    `vortex:\/\/play?game=4&token=x`
+/// * percent-encoded in a query parameter  `vortex%3A%2F%2Fplay%3Fgame%3D4`
+/// * with HTML entities for the slashes    `vortex:&#47;&#47;play?...`
 pub fn extract_vortex_uri(html: &str) -> Option<String> {
-    let start = html.find("vortex://")?;
-    let rest = &html[start..];
+    // Percent-encoded first: decoding it may reveal one of the other forms.
+    if let Some(found) =
+        find_run(html, "vortex%3A%2F%2F").or_else(|| find_run(html, "vortex%3a%2f%2f"))
+    {
+        if let Some(uri) = scan_plain(&percent_decode(&found)) {
+            return Some(uri);
+        }
+    }
+
+    let unescaped = html
+        .replace("\\/", "/")
+        .replace("&#47;", "/")
+        .replace("&#x2F;", "/")
+        .replace("&#x2f;", "/")
+        .replace("&sol;", "/");
+
+    scan_plain(&unescaped).or_else(|| scan_plain(html))
+}
+
+/// Find the first `vortex://...` run in already-unescaped text.
+fn scan_plain(text: &str) -> Option<String> {
+    let start = text.find("vortex://")?;
+    let rest = &text[start..];
     let end = rest
-        .find(|c: char| c == '"' || c == '\'' || c == '<' || c == '\\' || c.is_whitespace())
+        .find(|c: char| matches!(c, '"' | '\'' | '<' | '>' | '\\' | '`' | ')') || c.is_whitespace())
         .unwrap_or(rest.len());
-    let candidate = &rest[..end];
-    // HTML-escaped ampersands are common in embedded attributes.
+    let candidate = rest[..end].trim_end_matches([',', ';']);
+    if candidate.len() <= "vortex://".len() {
+        return None;
+    }
     Some(candidate.replace("&amp;", "&"))
+}
+
+/// Everything from `needle` up to the first delimiter, `needle` included.
+fn find_run(text: &str, needle: &str) -> Option<String> {
+    let start = text.find(needle)?;
+    let rest = &text[start..];
+    let end = rest
+        .find(|c: char| matches!(c, '"' | '\'' | '<' | '>' | '\\') || c.is_whitespace())
+        .unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
+/// Minimal percent-decoding: only `%XX`, which is all a URI needs.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(byte) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -272,6 +453,104 @@ mod tests {
     #[test]
     fn extraction_returns_none_when_absent() {
         assert!(extract_vortex_uri("<html>Please sign in</html>").is_none());
+        // A bare scheme with nothing after it is not a link.
+        assert!(extract_vortex_uri("see vortex:// for details").is_none());
+    }
+
+    #[test]
+    fn extracts_a_link_escaped_inside_a_javascript_string() {
+        // How a URI looks when a page embeds it in JSON or a JS string literal.
+        let html = r#"<script>window.__DATA__={"launch":"vortex:\/\/play?game=15&token=abc123"};</script>"#;
+        let raw = extract_vortex_uri(html).unwrap();
+        let link = crate::uri::parse(&raw).unwrap();
+        assert_eq!(link.game_id, 15);
+        assert_eq!(link.token, "abc123");
+    }
+
+    #[test]
+    fn extracts_a_link_written_with_html_entities_for_the_slashes() {
+        let html = "<a href=\"vortex:&#47;&#47;play?game=15&amp;token=abc123\">Play</a>";
+        let link = crate::uri::parse(&extract_vortex_uri(html).unwrap()).unwrap();
+        assert_eq!(link.game_id, 15);
+        assert_eq!(link.token, "abc123");
+
+        let hex = "<a href=\"vortex:&#x2F;&#x2F;play?game=15&amp;token=abc123\">Play</a>";
+        assert_eq!(
+            crate::uri::parse(&extract_vortex_uri(hex).unwrap())
+                .unwrap()
+                .game_id,
+            15
+        );
+    }
+
+    #[test]
+    fn extracts_a_percent_encoded_link_from_a_query_parameter() {
+        let html =
+            "<a href=\"/redirect?to=vortex%3A%2F%2Fplay%3Fgame%3D15%26token%3Dabc123\">Play</a>";
+        let link = crate::uri::parse(&extract_vortex_uri(html).unwrap()).unwrap();
+        assert_eq!(link.game_id, 15);
+        assert_eq!(link.token, "abc123");
+    }
+
+    #[test]
+    fn extraction_stops_at_markup_and_punctuation_boundaries() {
+        // A link followed by a closing paren or a comma in prose.
+        let link = crate::uri::parse(
+            &extract_vortex_uri("open (vortex://play?game=1&token=t), then wait").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(link.token, "t");
+    }
+
+    #[test]
+    fn a_sign_in_page_is_recognised_rather_than_blamed_on_the_link() {
+        // The failure the first device report hit: the play page came back as
+        // something with no launch link, and the old code guessed "the account
+        // may not own this game", which was wrong and unactionable.
+        let login = r#"<html><head><title>Sign in</title></head><body>
+            <form action="/login"><input type="password" name="password"></form>
+            </body></html>"#;
+        assert!(looks_like_sign_in_page(login));
+        assert!(extract_vortex_uri(login).is_none());
+
+        // A real play page is not mistaken for one.
+        let play =
+            r#"<html><title>Play</title><a href="vortex://play?game=1&token=t">Play</a></html>"#;
+        assert!(!looks_like_sign_in_page(play));
+    }
+
+    #[test]
+    fn redirect_targets_are_classified() {
+        assert!(looks_like_sign_in("/login?next=/games/15/play"));
+        assert!(looks_like_sign_in("https://playvortex.io/sign-in"));
+        assert!(!looks_like_sign_in("/games/15/launch"));
+    }
+
+    #[test]
+    fn the_page_description_reports_structure_and_never_content() {
+        let html = r#"<html><head><title>Play - Vortex</title></head><body>
+            <p>Welcome back, Jane Doe (jane@example.com)</p>
+            <script>var launch = "vortex:\/\/play?game=15&token=SECRETTOKEN";</script>
+            </body></html>"#;
+        let described = describe_play_page(html, 15);
+
+        // Useful: it says what shapes are present.
+        assert!(described.contains("play page for game 15"), "{described}");
+        assert!(described.contains("bytes"), "{described}");
+        assert!(described.contains("<script>"), "{described}");
+        assert!(described.contains("mentions 'vortex:'"), "{described}");
+        assert!(described.contains("mentions 'token'"), "{described}");
+        // And it reports how the URI is written, which is the actionable part.
+        assert!(
+            described.contains("first 'vortex:' is written"),
+            "{described}"
+        );
+
+        // Safe: nothing from the page itself survives.
+        assert!(!described.contains("SECRETTOKEN"), "{described}");
+        assert!(!described.contains("Jane"), "{described}");
+        assert!(!described.contains("jane@example.com"), "{described}");
+        assert!(!described.contains("Welcome"), "{described}");
     }
 
     #[test]

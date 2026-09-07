@@ -112,6 +112,23 @@ those will break it.
 
 ## Launching
 
+### "the play page ... contains no launch link in any form Tempest recognises"
+
+Tempest gets the launch link by asking Vortex for the game's play page and
+reading the `vortex://` URI out of it. This message means the page loaded fine
+but held no link Tempest could find — which normally means the website changed
+shape, not that anything is wrong with your account.
+
+When this happens Tempest writes a **description of the page's structure** to the
+log: its size, its title, which relevant words appear, and — most usefully — how
+the text `vortex:` is written, with every letter and digit replaced by `x` so
+nothing of yours is recorded. Send that line from Settings → Logs and the parser
+can be taught the new shape.
+
+Note the errors it is careful *not* to confuse this with. If your session has
+actually expired, Vortex redirects to the sign-in page, and Tempest now says so
+directly rather than blaming the link.
+
 ### "These still need to be installed: …"
 
 Exactly what it says. **Settings → Runtime → Install everything required**.

@@ -34,6 +34,7 @@ pub use process::{ProcessBackend, ProcessHandle, ProcessSpec, ProcessStatus};
 pub use secrets::SecretStore;
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Which host the core is running on. Used for diagnostics and for deciding
@@ -96,6 +97,41 @@ pub trait Platform: Send + Sync + 'static {
     /// changing anything**. Diagnostics must not have side effects: running
     /// `tempest doctor` should never silently re-register a handler.
     fn uri_handler_status(&self) -> crate::Result<UriRegistration>;
+
+    /// Where Wine can find an X server on this host.
+    ///
+    /// Desktop Linux already has one; Android has none, and Tempest has to
+    /// start one itself. See [`DisplayProvider`].
+    fn display_provider(&self) -> DisplayProvider {
+        DisplayProvider::HostNative
+    }
+}
+
+/// How an X display is obtained on a given host.
+///
+/// Android has no X server, and the obvious candidate — the Termux:X11 app —
+/// is not one either: `com.termux.x11` is only the *viewer*. The server is a
+/// Java entry point inside that APK which is meant to be run by whichever
+/// process wants the display, using `app_process`. That matters, because the
+/// server creates its socket in `$TMPDIR` **as the process that started it**.
+/// A server started by Termux puts its socket inside Termux's private storage,
+/// which no other app can reach; Tempest has to start its own so the socket
+/// lands inside Tempest's own container.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayProvider {
+    /// The host runs its own X server and Tempest should not interfere.
+    HostNative,
+    /// Tempest starts the server from the Termux:X11 APK at this path.
+    TermuxX11 { apk: PathBuf },
+    /// No display is obtainable; `reason` says why, for the user.
+    Unavailable { reason: String },
+}
+
+impl DisplayProvider {
+    /// Whether Tempest is responsible for starting the server.
+    pub fn is_managed(&self) -> bool {
+        matches!(self, Self::TermuxX11 { .. })
+    }
 }
 
 /// Shared handle used throughout the core.

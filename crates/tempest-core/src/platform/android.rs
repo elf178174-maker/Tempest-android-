@@ -19,7 +19,7 @@ use super::paths::TempestPaths;
 use super::process::ProcessBackend;
 use super::secrets::SecretStore;
 use super::unix_process::UnixProcessBackend;
-use super::{HostKind, Platform, PlatformInfo, UriRegistration};
+use super::{DisplayProvider, HostKind, Platform, PlatformInfo, UriRegistration};
 use crate::Result;
 use std::path::PathBuf;
 
@@ -43,6 +43,11 @@ pub struct AndroidContext {
     pub model: String,
     /// `Build.SUPPORTED_ABIS[0]`.
     pub primary_abi: String,
+    /// `ApplicationInfo.sourceDir` of `com.termux.x11`, when that app is
+    /// installed. Tempest runs the X server out of this APK itself; see
+    /// [`DisplayProvider`]. Resolved in Kotlin because only `PackageManager`
+    /// knows the path, and it changes on every update of that app.
+    pub x11_apk: Option<PathBuf>,
 }
 
 pub struct AndroidPlatform {
@@ -98,6 +103,25 @@ impl Platform for AndroidPlatform {
 
     fn uri_handler_status(&self) -> Result<UriRegistration> {
         Ok(UriRegistration::ManifestDeclared)
+    }
+
+    fn display_provider(&self) -> DisplayProvider {
+        match &self.ctx.x11_apk {
+            Some(apk) if apk.exists() => DisplayProvider::TermuxX11 { apk: apk.clone() },
+            Some(apk) => DisplayProvider::Unavailable {
+                reason: format!(
+                    "the Termux:X11 app is installed but its package file is no longer at {}. \
+                     Reopen Tempest so it can look the path up again.",
+                    apk.display()
+                ),
+            },
+            None => DisplayProvider::Unavailable {
+                reason: "the Termux:X11 app is not installed. Wine has nowhere to draw \
+                         without it. Install it from github.com/termux/termux-x11 \
+                         (the 'nightly' release, universal APK), then reopen Tempest."
+                    .to_string(),
+            },
+        }
     }
 
     fn register_uri_handler(&self) -> Result<UriRegistration> {
@@ -161,7 +185,7 @@ impl SecretStore for CallbackSecretStore {
 mod tests {
     use super::*;
     use crate::platform::secrets::MemorySecretStore;
-    use crate::platform::{HostKind, ProcessSpec, UriRegistration};
+    use crate::platform::{DisplayProvider, HostKind, ProcessSpec, UriRegistration};
 
     fn ctx(dir: &std::path::Path) -> AndroidContext {
         AndroidContext {
@@ -173,11 +197,47 @@ mod tests {
             release: "15".into(),
             model: "POCO F7 Ultra".into(),
             primary_abi: "arm64-v8a".into(),
+            x11_apk: None,
         }
     }
 
     fn platform(dir: &std::path::Path) -> AndroidPlatform {
         AndroidPlatform::new(ctx(dir), Box::new(MemorySecretStore::default())).unwrap()
+    }
+
+    #[test]
+    fn without_the_x11_app_the_reason_says_what_to_install() {
+        let dir = tempfile::tempdir().unwrap();
+        match platform(dir.path()).display_provider() {
+            DisplayProvider::Unavailable { reason } => {
+                assert!(reason.contains("Termux:X11"), "{reason}");
+                assert!(reason.contains("termux-x11"), "{reason}");
+            }
+            other => panic!("expected no display provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_installed_x11_apk_is_offered_as_the_display_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let apk = dir.path().join("base.apk");
+        std::fs::write(&apk, b"not really a zip").unwrap();
+        let mut c = ctx(dir.path());
+        c.x11_apk = Some(apk.clone());
+        let p = AndroidPlatform::new(c, Box::new(MemorySecretStore::default())).unwrap();
+        assert_eq!(p.display_provider(), DisplayProvider::TermuxX11 { apk });
+    }
+
+    #[test]
+    fn an_x11_apk_that_has_since_been_uninstalled_is_not_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = ctx(dir.path());
+        c.x11_apk = Some(dir.path().join("gone.apk"));
+        let p = AndroidPlatform::new(c, Box::new(MemorySecretStore::default())).unwrap();
+        assert!(matches!(
+            p.display_provider(),
+            DisplayProvider::Unavailable { .. }
+        ));
     }
 
     #[test]
@@ -259,9 +319,11 @@ mod tests {
         assert!(!p
             .process()
             .can_execute(&p.paths().runtime_dir().join("rootfs/usr/bin/wine")));
-        assert!(!p
+        // /system is the one exception, and it is not a loophole: it is
+        // read-only, so nothing Tempest downloads can ever end up there.
+        assert!(p
             .process()
-            .can_execute(std::path::Path::new("/system/bin/sh")));
+            .can_execute(std::path::Path::new("/system/bin/app_process")));
     }
 
     #[test]

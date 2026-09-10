@@ -152,16 +152,23 @@ impl UnixProcessBackend {
         Self::new(Arc::new(|_: &Path| true), "no execution restrictions")
     }
 
-    /// Policy that only allows files under `native_bin`, which is what Android
-    /// enforces for apps targeting API 29 and above.
+    /// Policy for Android: `native_bin` plus the read-only system partition.
+    ///
+    /// Apps targeting API 29+ may not `execve()` anything in their own writable
+    /// data directory, which is why `native_bin` (populated from the APK by the
+    /// installer, and read-only) is the only writable-side path allowed.
+    /// `/system` is a separate case: it is read-only and apps have always been
+    /// able to run binaries from it. Tempest needs exactly one —
+    /// `/system/bin/app_process`, to host the X server — and allowing the
+    /// directory rather than the single file keeps the rule easy to state.
     pub fn restricted_to(native_bin: PathBuf) -> Self {
         let dir = native_bin.clone();
         Self::new(
-            Arc::new(move |p: &Path| p.starts_with(&dir)),
+            Arc::new(move |p: &Path| p.starts_with(&dir) || p.starts_with("/system/")),
             format!(
                 "Android only permits execve() of files under the app's native \
-                 library directory ({}); binaries written to app data can be \
-                 mapped but not executed",
+                 library directory ({}) or the read-only system partition; \
+                 binaries written to app data can be mapped but not executed",
                 native_bin.display()
             ),
         )

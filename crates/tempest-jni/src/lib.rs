@@ -89,6 +89,9 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeInit(
             release: String,
             model: String,
             primary_abi: String,
+            /// `ApplicationInfo.sourceDir` of com.termux.x11, if installed.
+            #[serde(default)]
+            x11_apk: Option<String>,
         }
         let cfg: InitConfig =
             serde_json::from_str(&raw).map_err(|e| TempestError::Config(e.to_string()))?;
@@ -112,6 +115,7 @@ pub extern "system" fn Java_io_tempest_android_core_TempestBridge_nativeInit(
                 release: cfg.release,
                 model: cfg.model,
                 primary_abi: cfg.primary_abi,
+                x11_apk: cfg.x11_apk.map(Into::into),
             },
             secret_store,
         )?);

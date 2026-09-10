@@ -102,6 +102,12 @@ object TempestBridge {
             put("release", Build.VERSION.RELEASE ?: "unknown")
             put("model", Build.MODEL ?: "unknown")
             put("primary_abi", Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown")
+            // Wine needs an X server and Android has none. Termux:X11's APK
+            // contains one, meant to be started by whichever process wants the
+            // display — so Tempest starts it itself, and needs the path to that
+            // APK. Only PackageManager knows it, and it changes on every update
+            // of that app, so it is resolved here rather than guessed in Rust.
+            termuxX11Apk(app)?.let { put("x11_apk", it) }
         }
 
         return runCatching {
@@ -112,6 +118,21 @@ object TempestBridge {
     }
 
     val isInitialised: Boolean get() = initialised
+
+    /**
+     * Path to the installed Termux:X11 package, or null if it is not installed.
+     *
+     * Requires the `<queries>` entry in the manifest: since API 30 an app
+     * cannot see packages it has not declared an interest in.
+     */
+    private fun termuxX11Apk(context: Context): String? = runCatching {
+        context.packageManager
+            .getApplicationInfo(X11_PACKAGE, 0)
+            .sourceDir
+    }.getOrNull()
+
+    /** The app that provides the X server. */
+    const val X11_PACKAGE = "com.termux.x11"
 
     /** Receives calls from Rust. Must stay `internal`; ProGuard keeps it by name. */
     private object Callback {

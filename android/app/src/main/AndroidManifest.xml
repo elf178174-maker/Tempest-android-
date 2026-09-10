@@ -25,6 +25,17 @@
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="true" />
     <uses-feature android:name="android.hardware.vulkan.level" android:version="0" android:required="false" />
 
+    <!--
+      Since API 30 an app cannot see which other packages are installed unless
+      it declares an interest in them. Tempest needs exactly one: the Termux:X11
+      app, whose APK contains the X server Wine draws through. Naming the single
+      package keeps this to the narrowest possible declaration — QUERY_ALL_PACKAGES
+      is a sensitive permission and is not needed here.
+    -->
+    <queries>
+        <package android:name="com.termux.x11" />
+    </queries>
+
     <application
         android:name=".TempestApp"
         android:allowBackup="false"

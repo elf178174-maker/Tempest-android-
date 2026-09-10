@@ -1,6 +1,7 @@
 //! Runtime component management: install, verify, remove, report.
 
 pub mod archive;
+pub mod display;
 pub mod dll;
 pub mod guest;
 pub mod manifest;

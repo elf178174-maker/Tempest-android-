@@ -6,7 +6,9 @@
 //! the interesting questions are different ones — is the container runnable, is
 //! there a Vulkan device inside it, is an X server reachable.
 
-use crate::platform::{HostKind, PlatformRef};
+use crate::config::Config;
+use crate::platform::{DisplayProvider, HostKind, PlatformRef};
+use crate::runtime::display::DisplayPlan;
 use crate::runtime::guest::GuestEnv;
 use crate::runtime::{manifest, RuntimeManager};
 use serde::{Deserialize, Serialize};
@@ -361,7 +363,10 @@ pub fn run(platform: &PlatformRef) -> Report {
     }
 
     // --- X server ----------------------------------------------------------
-    checks.push(x_server_check());
+    checks.push(x_server_check(
+        platform,
+        &Config::load_or_default(platform.paths()),
+    ));
 
     // --- Auth --------------------------------------------------------------
     match crate::auth::stored_token(platform) {
@@ -444,26 +449,50 @@ fn normalise(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Is an X server reachable?
+/// Can Wine get a window to draw in?
 ///
-/// Termux:X11 listens on the abstract Unix socket `@termux-x11` as well as the
-/// usual `/tmp/.X11-unix/X0`. Only the filesystem socket can be probed from
-/// here without opening a connection, so both are checked and the result is
-/// advisory rather than fatal.
-fn x_server_check() -> Check {
-    let socket = std::path::Path::new("/tmp/.X11-unix/X0");
-    if socket.exists() {
-        return Check::pass(
+/// This check used to look for `/tmp/.X11-unix/X0` and for Termux's copy of
+/// it, and it could never have passed on Android: the first path is inside the
+/// container rather than on the host, and the second belongs to another app,
+/// which Android does not let Tempest read. What matters is not whether some
+/// X server exists somewhere on the device but whether *Tempest* can start one
+/// whose socket lands inside its own container — so that is what is reported.
+fn x_server_check(platform: &PlatformRef, config: &Config) -> Check {
+    let containerised = platform.info().kind == HostKind::Android;
+    let plan = DisplayPlan::for_paths(&config.graphics.display, platform.paths(), containerised);
+
+    if let Some(plan) = &plan {
+        if plan.is_listening() {
+            return Check::pass(
+                "X server",
+                format!("a server is listening on {}", plan.display),
+            );
+        }
+    }
+
+    if !containerised {
+        return Check::warn(
             "X server",
-            "a display socket is present at /tmp/.X11-unix/X0",
+            format!("nothing is listening on {}", config.graphics.display),
+            "Start your desktop session, or set graphics.display in config.toml to \
+             the display you actually use.",
         );
     }
-    Check::warn(
-        "X server",
-        "no X display socket was found",
-        "Wine needs somewhere to draw. Install the Termux:X11 companion app, open \
-         it, and leave it running in the background before launching a game.",
-    )
+
+    match platform.display_provider() {
+        DisplayProvider::TermuxX11 { .. } => Check::pass(
+            "X server",
+            "Termux:X11 is installed; Tempest will start a server on it at launch",
+        ),
+        DisplayProvider::Unavailable { reason } => {
+            Check::warn("X server", "no X server can be started", reason)
+        }
+        DisplayProvider::HostNative => Check::warn(
+            "X server",
+            format!("nothing is listening on {}", config.graphics.display),
+            "Start an X server before launching a game.",
+        ),
+    }
 }
 
 #[cfg(test)]

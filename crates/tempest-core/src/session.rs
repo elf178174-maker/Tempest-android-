@@ -13,6 +13,7 @@
 
 use crate::config::Config;
 use crate::platform::{PlatformRef, ProcessHandle, ProcessStatus};
+use crate::runtime::display::{self, DisplayPlan};
 use crate::runtime::guest::{self, GuestEnv};
 use crate::runtime::RuntimeManager;
 use crate::uri::VortexLink;
@@ -24,6 +25,11 @@ use std::sync::{Arc, Mutex};
 /// root to drive `Z:`, and `/vortex` is where the client directory is bound.
 const GUEST_VORTEX_EXE: &str = "Z:\\vortex\\Vortex.exe";
 const GUEST_RECEIVER_EXE: &str = "Z:\\vortex\\receiver.exe";
+
+/// How long to wait for the X server to start accepting connections. The
+/// server has to load a dex and a few megabytes of native code before it
+/// binds; on a cold start that is seconds, not milliseconds.
+const X_SERVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Turn a host path into the `Z:`-rooted Windows path Wine will accept.
 fn windows_path(host: &std::path::Path) -> String {
@@ -90,6 +96,10 @@ struct Inner {
     snapshot: SessionSnapshot,
     vortex: Option<Box<dyn ProcessHandle>>,
     receiver: Option<Box<dyn ProcessHandle>>,
+    /// The X server, when Tempest started it. `None` means either that there
+    /// is no container or that a server was already listening, and in both
+    /// cases stopping it is not Tempest's business.
+    x_server: Option<Box<dyn ProcessHandle>>,
     output: Vec<String>,
     /// Environment contributed by the front-end rather than by config — the
     /// desktop CLI's optional plugins are the only current source.
@@ -114,6 +124,7 @@ impl SessionManager {
                 snapshot: SessionSnapshot::default(),
                 vortex: None,
                 receiver: None,
+                x_server: None,
                 output: Vec::new(),
                 extra_env: std::collections::BTreeMap::new(),
                 filter_noise: true,
@@ -193,6 +204,11 @@ impl SessionManager {
                     r.terminate().ok();
                 }
                 inner.receiver = None;
+                // The display exists for the game; with the game gone it is
+                // just a wake lock on the GPU.
+                if let Some(mut x) = inner.x_server.take() {
+                    x.terminate().ok();
+                }
             }
             Err(e) => {
                 inner.snapshot.state = SessionState::Failed;
@@ -258,21 +274,11 @@ impl SessionManager {
         let guest_env = GuestEnv::new(&self.platform);
         guest_env.preflight()?;
 
-        // Wine draws through X11, which Android does not have. Checking here
-        // costs nothing and saves the user a two-minute prefix build followed
-        // by an opaque Wine error.
-        if guest_env.is_containerised() && !x_display_available() {
-            return Err(TempestError::missing(
-                "an X server",
-                format!(
-                    "Wine has nowhere to draw. Install the Termux:X11 companion app \
-                     (github.com/termux/termux-x11), open it, and leave it running in \
-                     the background — then launch again. Tempest is looking for \
-                     display {}.",
-                    config.graphics.display
-                ),
-            ));
-        }
+        // Wine draws through X11, which Android does not have, so Tempest
+        // starts one. This is deliberately *not* a gate: if it fails the
+        // launch still goes ahead, because a Wine error naming the real
+        // problem is more useful than Tempest refusing on its own guess.
+        self.ensure_display(&guest_env, &config);
 
         self.ensure_prefix(&runtime, &config)?;
 
@@ -317,6 +323,47 @@ impl SessionManager {
         inner.snapshot.pid = Some(handle.pid());
         inner.vortex = Some(handle);
         Ok(())
+    }
+
+    /// Make sure there is an X server for Wine to draw on.
+    ///
+    /// Failure here is reported, never fatal. Tempest cannot be certain a
+    /// launch is doomed — the user may have a display Tempest does not know
+    /// how to start — and refusing to try was, in an earlier version, the
+    /// thing actually stopping people from playing. If there really is no
+    /// display, Wine says "could not open display" and [`explain_failure`]
+    /// turns that into the same advice, at a point where it is a fact rather
+    /// than a prediction.
+    fn ensure_display(&self, guest_env: &GuestEnv, config: &Config) {
+        if !guest_env.is_containerised() {
+            return;
+        }
+        let paths = self.platform.paths();
+        let Some(plan) = DisplayPlan::for_paths(&config.graphics.display, paths, true) else {
+            crate::logging::warn(
+                "display",
+                format!(
+                    "{} is not a local display, so Tempest will not start a server for it",
+                    config.graphics.display
+                ),
+            );
+            return;
+        };
+
+        self.set_status(SessionState::PreparingPrefix, "Starting the display…");
+        match display::ensure_running(&self.platform, &plan, X_SERVER_TIMEOUT) {
+            Ok(handle) => {
+                self.inner.lock().expect("session lock").x_server = handle;
+            }
+            Err(e) => crate::logging::warn(
+                "display",
+                format!(
+                    "could not start an X server on {}: {e} — launching anyway, \
+                     but Wine will have nowhere to draw",
+                    plan.display
+                ),
+            ),
+        }
     }
 
     /// Start `receiver.exe` if it exists and is not already running.
@@ -493,6 +540,9 @@ impl SessionManager {
         if let Some(mut handle) = inner.receiver.take() {
             handle.terminate().ok();
         }
+        if let Some(mut handle) = inner.x_server.take() {
+            handle.terminate().ok();
+        }
         self.platform.process().terminate_all();
 
         inner.snapshot.state = SessionState::Exited;
@@ -524,8 +574,11 @@ fn explain_failure(status: &ProcessStatus, output: &[String]) -> String {
         || tail.contains("no driver could be loaded")
     {
         Some(
-            "Wine could not reach an X server. Start the Termux:X11 companion app \
-             and leave it running, then launch again.",
+            "Wine could not reach an X server. Tempest starts one out of the \
+             Termux:X11 app, so that app has to be installed — but it does not \
+             have to be running; Tempest runs its own server so the display is \
+             inside its container. Install it from github.com/termux/termux-x11 \
+             if it is missing, and check the log for what the server said.",
         )
     } else if tail.contains("vulkan") && (tail.contains("no device") || tail.contains("icd")) {
         Some(
@@ -556,20 +609,6 @@ fn explain_failure(status: &ProcessStatus, output: &[String]) -> String {
             status.explain()
         ),
     }
-}
-
-/// Whether an X display socket is present.
-///
-/// Termux:X11 also offers an abstract socket that cannot be probed without
-/// connecting, so a filesystem socket is the only thing checkable up front.
-/// Both the standard path and Termux's own location are considered.
-fn x_display_available() -> bool {
-    [
-        "/tmp/.X11-unix/X0",
-        "/data/data/com.termux/files/usr/tmp/.X11-unix/X0",
-    ]
-    .iter()
-    .any(|p| std::path::Path::new(p).exists())
 }
 
 fn now_secs() -> u64 {
@@ -689,16 +728,6 @@ mod tests {
         assert!(json.contains("\"state\":\"running\""), "{json}");
         let back: SessionSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(back.game_id, Some(4));
-    }
-
-    #[test]
-    fn a_missing_x_server_is_caught_before_the_prefix_is_built() {
-        // Building the prefix takes minutes on an emulated stack. Failing fast
-        // with a specific instruction beats failing slowly with a Wine error.
-        assert!(
-            !x_display_available() || std::path::Path::new("/tmp/.X11-unix/X0").exists(),
-            "the probe must only report a display that actually exists"
-        );
     }
 
     #[test]

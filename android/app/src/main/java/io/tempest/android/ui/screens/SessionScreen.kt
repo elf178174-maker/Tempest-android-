@@ -88,8 +88,10 @@ fun SessionScreen(state: UiState, viewModel: TempestViewModel) {
                         )
                     }
                     Text(
-                        "The game draws to an X server. Switch to Termux:X11 to see it — " +
-                            "Tempest keeps the game running in the background.",
+                        "Tempest starts an X server for the game to draw on, and the " +
+                            "Termux:X11 viewer should open by itself. If it does not, " +
+                            "switch to it manually — Tempest keeps the game running in " +
+                            "the background either way.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),

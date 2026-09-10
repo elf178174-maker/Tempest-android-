@@ -99,15 +99,26 @@ Four components are installed:
 Each one shows where it came from, its licence, and the SHA-256 of what was
 actually installed. Downloads are verified before anything is unpacked.
 
-### You also need an X server
+### You also need Termux:X11 installed
 
 Wine draws through X11, which Android does not have. Install
 **[Termux:X11](https://github.com/termux/termux-x11/releases)** — a separate,
-open-source app — open it, and leave it running in the background before you
-launch a game.
+open-source app.
+
+You do **not** have to start it yourself. Termux:X11's APK contains both a
+viewer and an X server, and the server is designed to be launched by whichever
+process wants a display. Tempest launches its own, so the display socket is
+created *inside Tempest's container* where Wine can reach it. A server you
+started from Termux would put its socket inside Termux's private storage, which
+Android does not let any other app read.
+
+When Tempest starts the server, the Termux:X11 viewer opens by itself. Switch to
+it to see the game.
 
 It is a separate app on purpose: it is GPL-3.0, and it is better maintained by
 people who specialise in it than it would be if this project reimplemented it.
+Tempest never modifies or redistributes it — it runs an installed app's public
+entry point, the same way Termux's own `termux-x11` command does.
 
 ---
 

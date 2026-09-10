@@ -152,18 +152,41 @@ else can possibly work.
 
 ### "Wine could not reach an X server"
 
-The most common failure, and the easiest to fix.
-
-Wine draws through X11, which Android does not have. Install
-**[Termux:X11](https://github.com/termux/termux-x11/releases)**, open it, and
-leave it running in the background *before* launching a game. Then try again.
+Wine draws through X11, which Android does not have. Tempest starts one for
+itself out of the **[Termux:X11](https://github.com/termux/termux-x11/releases)**
+app, so that app has to be **installed** — but it does not have to be running,
+and starting it yourself does not help.
 
 **Termux:X11 is not the same app as Termux.** Installing plain Termux does
-nothing here — you need the separate `app-*-debug.apk` from the Termux:X11
-releases page, and you have to *open* it at least once so it starts listening.
+nothing here — you need `app-*-debug.apk` from the Termux:X11 releases page
+(the `universal` one if there is a choice).
 
-If Termux:X11 is running and this still appears, check that
-**Settings → Graphics → display** is `:0`.
+If it is installed and this still appears:
+
+- Look in the log for lines tagged `display`. Tempest logs the exact command it
+  used to start the server and whatever the server printed. `Copy logs` from the
+  Logs screen puts all of it on the clipboard.
+- `the X server exited immediately` usually means the APK is a variant whose
+  native library does not match this device. Install the `universal` build.
+- Check **Settings → Graphics → display** is `:0`.
+
+#### Why Tempest starts the server itself
+
+This surprises people who already use Termux:X11, so it is worth stating.
+
+`com.termux.x11` is two things in one APK: a **viewer** (the activity that shows
+the picture) and an **X server** (`com.termux.x11.CmdEntryPoint`, a Java entry
+point started with `app_process`). The server creates its socket at
+`$TMPDIR/.X11-unix/X<n>` **as whichever process started it**. Termux's
+`termux-x11` command starts it inside Termux, so the socket lands in Termux's
+private storage — and Android does not let one app read another app's files, so
+Tempest could never connect to it.
+
+So Tempest starts its own, with `TMPDIR` pointing at its guest filesystem's
+`/tmp`. The socket then appears at `/tmp/.X11-unix/X0` *inside the container*,
+which is exactly where Wine looks. As a bonus, the Termux:X11 server derives its
+font and keymap paths from `dirname($TMPDIR)`, so it picks those up from the
+Ubuntu tree Tempest already installed.
 
 ### "No usable Vulkan device was found in the container"
 

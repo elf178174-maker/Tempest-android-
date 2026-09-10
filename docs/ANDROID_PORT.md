@@ -264,11 +264,78 @@ never executed outside the container.
 
 ### The display
 
-Wine needs an X server. Rather than bundling one, Tempest connects to
-**Termux:X11**, a mature open-source X server for Android that renders to a
-`SurfaceView`. It stays a separate app the user installs: it is GPL-3.0, and
-keeping it separate avoids any licence question about the APK while giving the
-user a component that is maintained by people who specialise in it.
+Wine needs an X server. Android has none, and the only maintained ARM64 one is
+**Termux:X11**. How it is integrated took a wrong turn first, so both the wrong
+answer and the right one are recorded here.
+
+`com.termux.x11` is not an X server that other apps connect to. The APK contains
+two things:
+
+| Part | What it is |
+| --- | --- |
+| `MainActivity` | The **viewer**: a `SurfaceView` that renders frames handed to it over a Binder. |
+| `com.termux.x11.CmdEntryPoint` | The **X server**: a Java entry point started with `/system/bin/app_process`. |
+
+The server runs as *the process that started it*, in that process's mount
+namespace, and binds its socket at `$TMPDIR/.X11-unix/X<n>`. Termux's own
+`termux-x11` script is nothing more than an `app_process` invocation with
+`CLASSPATH` set — it is meant to be run by whoever wants the display.
+
+**The wrong answer**, which shipped briefly: tell the user to start Termux:X11
+and have Tempest look for the socket. This can never work. A server started from
+Termux binds its socket inside Termux's private storage, and Android gives no
+app access to another app's files; and the standard `/tmp/.X11-unix/X0` is
+inside the *container*, not on the Android host. The check was a guaranteed
+false negative, and — worse — it was wired in as a hard pre-launch gate, so it
+stopped launches that might otherwise have worked. Detection that cannot succeed
+must not be allowed to block anything.
+
+**The right answer**: Tempest starts the server itself.
+
+```
+/system/bin/app_process -Xnoimage-dex2oat / --nice-name=tempest-x11 \
+    com.termux.x11.CmdEntryPoint :0
+  CLASSPATH=<sourceDir of com.termux.x11, from PackageManager>
+  TMPDIR=<runtime>/rootfs/tmp
+```
+
+Consequences, all of them wanted:
+
+- The socket appears at `<rootfs>/tmp/.X11-unix/X0`, which inside PRoot *is*
+  `/tmp/.X11-unix/X0` — exactly where Wine looks, with no bind mount needed.
+- The server derives its font and keymap roots from `dirname($TMPDIR)`, so it
+  finds the Ubuntu tree's own `usr/share/X11/xkb` and fonts. Termux:X11 has that
+  path deliberately, for chroot and PRoot users.
+- `CmdEntryPoint` broadcasts `ACTION_START` to `com.termux.x11`, whose receiver
+  is exported, so the viewer opens on its own and shows the picture.
+- The server loads its native code straight out of the APK (`useLegacyPackaging
+  false` makes it uncompressed and page-aligned), so nothing has to be extracted
+  or made executable.
+
+Three supporting changes were needed:
+
+1. **`<queries>` in the manifest.** Since API 30 an app cannot see another
+   package unless it declares an interest. One `<package>` entry naming
+   `com.termux.x11` is the narrowest possible form; `QUERY_ALL_PACKAGES` is a
+   sensitive permission and is not used.
+2. **The exec policy had to allow `/system`.** The Android process backend
+   restricts `execve()` to `nativeLibraryDir`, which is right for anything
+   Tempest downloads. `/system` is a different case: read-only, and apps have
+   always been able to run binaries from it. Nothing Tempest writes can ever end
+   up there, so widening the rule to that one directory costs nothing.
+3. **`app_process` needs the Android runtime environment.** The process backend
+   clears the environment before `execve()`. `app_process` aborts without
+   `BOOTCLASSPATH`, `DEX2OATBOOTCLASSPATH` and the `ANDROID_*` APEX roots, so
+   those specific variables are passed through from Tempest's own environment
+   and nothing else is.
+
+Tempest never modifies, repackages or redistributes Termux:X11; it executes an
+installed app's public entry point. Keeping it a separate, user-installed,
+GPL-3.0 app is what keeps that licence boundary clean.
+
+If the server cannot be started, Tempest logs why and **launches anyway**. Wine
+then fails with `could not open display`, which is a fact rather than a
+prediction, and the failure explanation turns it into the same advice.
 
 `DISPLAY` defaults to `:0` and is configurable.
 

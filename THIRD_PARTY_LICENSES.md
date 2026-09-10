@@ -164,9 +164,15 @@ means the user receives Wine exactly as its own project published it.
 - **Upstream**: <https://github.com/termux/termux-x11>
 - **Licence**: GPL-3.0
 - **How it is used**: installed separately by the user, from its own publisher.
-  Tempest connects to it as an X client over the display socket.
+  Tempest starts that installed app's own public command-line entry point
+  (`com.termux.x11.CmdEntryPoint`) with `/system/bin/app_process` — the same
+  mechanism Termux's `termux-x11` script uses — and then talks to it as an
+  ordinary X client over the display socket.
 
-It is deliberately *not* bundled. Keeping it a separate application avoids any
+It is deliberately *not* bundled, and no part of it is copied, modified,
+repackaged or redistributed by this project. Tempest ships no Termux:X11 code:
+it invokes an application the user installed from its own publisher, at arm's
+length, as a separate program. Keeping it a separate application avoids any
 question about combining GPL-3.0 code with this project's licence, and leaves it
 maintained by the people who specialise in it.
 

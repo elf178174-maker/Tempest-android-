@@ -177,6 +177,14 @@ impl DisplayPlan {
             ])
             .envs(runtime_env(std::env::vars()))
             .env("CLASSPATH", apk.display().to_string())
+            // The X server writes its diagnostics to logcat, not to stderr,
+            // and Android only lets a process read its own logcat entries.
+            // With this set the server forks a `logcat --pid <self>` into its
+            // own stderr, which is the pipe Tempest captures — so a server
+            // that starts but never binds explains itself instead of timing
+            // out silently. It runs as Tempest's uid, so this reveals nothing
+            // that was not already Tempest's to see.
+            .env("TERMUX_X11_DEBUG", "1")
             .env("TMPDIR", self.tmp_dir.display().to_string())
             // The server resolves fonts and keymaps relative to dirname($TMPDIR),
             // which is the rootfs — but it only looks there if it is not told
@@ -319,6 +327,9 @@ mod tests {
         assert!(rendered.contains("/system/bin/app_process"), "{rendered}");
         assert!(rendered.contains(X11_ENTRY_CLASS), "{rendered}");
         assert!(rendered.contains(":0"), "{rendered}");
+        // Without this the server's own diagnostics go to logcat, which is
+        // unreadable from here, and a failure to bind has no explanation.
+        assert!(rendered.contains("TERMUX_X11_DEBUG"), "{rendered}");
         // argv, not a command line: no shell metacharacters anywhere.
         assert!(
             !rendered.contains("&&") && !rendered.contains(';'),

@@ -118,10 +118,11 @@ pub async fn request_session(username: &str, password: &str) -> Result<SessionCo
         .unwrap_or("")
         .to_string();
 
-    let cookies: Vec<(String, String)> = resp
+    let raw: Vec<(String, String, bool)> = resp
         .cookies()
-        .map(|c| (c.name().to_string(), c.value().to_string()))
+        .map(|c| (c.name().to_string(), c.value().to_string(), is_deletion(&c)))
         .collect();
+    let cookies = collapse_jar(&raw);
 
     // Cookie *names* are protocol, not secrets, and knowing which ones arrived
     // is the difference between diagnosing this in one round trip and guessing.
@@ -129,9 +130,12 @@ pub async fn request_session(username: &str, password: &str) -> Result<SessionCo
         "auth",
         format!(
             "login returned HTTP {status}; cookies set: [{}]{}",
-            cookies
-                .iter()
-                .map(|(name, _)| name.as_str())
+            raw.iter()
+                .map(|(name, _, deleted)| if *deleted {
+                    format!("{name} (cleared)")
+                } else {
+                    name.clone()
+                })
                 .collect::<Vec<_>>()
                 .join(", "),
             if redirect_target.is_empty() {
@@ -184,6 +188,47 @@ pub async fn request_session(username: &str, password: &str) -> Result<SessionCo
             .join("; "),
         token,
     })
+}
+
+/// Is this `Set-Cookie` clearing the cookie rather than setting it?
+///
+/// Servers routinely clear an old session before issuing a new one, in the
+/// same response. The clearing header has an empty value and an expiry in the
+/// past, and treating it as a real cookie sends the server a dead session.
+fn is_deletion(c: &reqwest::cookie::Cookie<'_>) -> bool {
+    if c.value().is_empty() {
+        return true;
+    }
+    if c.max_age() == Some(std::time::Duration::ZERO) {
+        return true;
+    }
+    matches!(c.expires(), Some(t) if t <= std::time::SystemTime::now())
+}
+
+/// Reduce a response's `Set-Cookie` headers to the jar a browser would hold.
+///
+/// Two rules, both from RFC 6265 §5.3: a later header for a name replaces an
+/// earlier one, and a cleared cookie leaves nothing behind. Order is otherwise
+/// preserved so the header reads the way the server sent it.
+///
+/// This matters because a real sign-in was observed setting `session_token`
+/// twice. Keeping both produced `session_token=<old>; session_token=<new>`,
+/// and which of the two a server honours is not defined — so the session
+/// worked or failed depending on the order the site happened to use.
+fn collapse_jar(raw: &[(String, String, bool)]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (name, value, deleted) in raw {
+        let existing = out.iter().position(|(n, _)| n == name);
+        match (existing, deleted) {
+            (Some(i), true) => {
+                out.remove(i);
+            }
+            (Some(i), false) => out[i].1 = value.clone(),
+            (None, true) => {}
+            (None, false) => out.push((name.clone(), value.clone())),
+        }
+    }
+    out
 }
 
 /// Extract a human-usable message from an error response.
@@ -513,6 +558,78 @@ fn percent_decode(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Helper mirroring what `resp.cookies()` yields: name, value, is-deletion.
+    fn jar(raw: &[(&str, &str, bool)]) -> Vec<(String, String)> {
+        let owned: Vec<(String, String, bool)> = raw
+            .iter()
+            .map(|(n, v, d)| (n.to_string(), v.to_string(), *d))
+            .collect();
+        collapse_jar(&owned)
+    }
+
+    #[test]
+    fn a_cookie_set_twice_keeps_only_the_later_value() {
+        // Observed on a real sign-in: Set-Cookie: session_token=… twice in one
+        // response. Keeping both produced "session_token=A; session_token=B",
+        // and which one a server honours is undefined — so the session worked
+        // or failed depending on the order the site happened to use.
+        assert_eq!(
+            jar(&[
+                ("session_token", "old", false),
+                ("session_token", "new", false)
+            ]),
+            vec![("session_token".to_string(), "new".to_string())]
+        );
+    }
+
+    #[test]
+    fn clearing_the_old_session_before_issuing_a_new_one_leaves_the_new_one() {
+        assert_eq!(
+            jar(&[
+                ("session_token", "", true),
+                ("session_token", "fresh", false)
+            ]),
+            vec![("session_token".to_string(), "fresh".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_cookie_cleared_after_being_set_is_not_sent_back() {
+        assert!(jar(&[("csrf", "abc", false), ("csrf", "", true)]).is_empty());
+    }
+
+    #[test]
+    fn unrelated_cookies_all_survive_in_the_order_the_server_sent_them() {
+        assert_eq!(
+            jar(&[
+                ("session_token", "t", false),
+                ("csrf", "c", false),
+                ("device", "d", false),
+            ]),
+            vec![
+                ("session_token".to_string(), "t".to_string()),
+                ("csrf".to_string(), "c".to_string()),
+                ("device".to_string(), "d".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_replaced_cookie_keeps_its_original_position() {
+        // Position is cosmetic, but a stable header makes logs comparable.
+        assert_eq!(
+            jar(&[
+                ("session_token", "old", false),
+                ("csrf", "c", false),
+                ("session_token", "new", false),
+            ]),
+            vec![
+                ("session_token".to_string(), "new".to_string()),
+                ("csrf".to_string(), "c".to_string()),
+            ]
+        );
+    }
 
     #[test]
     fn login_form_matches_the_vortex_endpoint_contract() {
